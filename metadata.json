@@ -1,0 +1,6 @@
+{
+  "name": "Offline AI",
+  "description": "A completely offline, local AI assistant on your Android device powered by a CPU-optimized local LLM for total user privacy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -26,6 +26,7 @@ class ChatRepository(
     val selectedModelName: StateFlow<String?> = offlineLlmEngine.selectedModelName
     val downloadProgress: StateFlow<Float?> = offlineLlmEngine.downloadProgress
     val downloadingModelName: StateFlow<String?> = offlineLlmEngine.downloadingModelName
+    val downloadError: StateFlow<String?> = offlineLlmEngine.downloadError
 
     fun selectModel(modelName: String) {
         offlineLlmEngine.selectAndLoadModel(modelName)
@@ -97,7 +98,7 @@ class ChatRepository(
                 timestamp = System.currentTimeMillis(),
                 inferenceTimeMs = result.timeMs,
                 tokensPerSecond = if (result.timeMs > 0) speed else 0f,
-                engineType = if (result.searchResults.isNotEmpty()) "Gemini 3.5 Flash (Grounded Search)" else "Gemini 3.5 Flash (Online)"
+                engineType = if (result.searchResults.isNotEmpty()) "Gemini 1.5 Flash (Grounded)" else "Gemini 1.5 Flash (Online)"
             )
         } else {
             val result = offlineLlmEngine.generateResponse(promptText, apiKey, systemPrompt)

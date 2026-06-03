@@ -74,6 +74,7 @@ fun ChatScreen(
     val selectedModelName by viewModel.selectedModelName.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val downloadingModelName by viewModel.downloadingModelName.collectAsState()
+    val downloadError by viewModel.downloadError.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var customModelUrl by remember { mutableStateOf("") }
@@ -368,6 +369,23 @@ fun ChatScreen(
                             }
                         }
 
+                        if (downloadError != null) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                                    .border(1.dp, Color.Red.copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF450a0a)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("Download Error", color = Color.Red, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(text = downloadError ?: "", color = Color.White, fontSize = 11.sp)
+                                }
+                            }
+                        }
+
                         if (availableModels.isEmpty()) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
@@ -481,10 +499,9 @@ fun ChatScreen(
                         )
                         
                         val presets = listOf(
-                            Triple("Gemma 2B Q2_K (GGUF - RichardErkhov Mirror)", "https://huggingface.co/RichardErkhov/google_-_gemma-2b-gguf/resolve/main/gemma-2b.Q2_K.gguf", "gemma-2b.Q2_K.gguf"),
-                            Triple("Phi-3 Mini 3.8B Q4 (GGUF - Official)", "https://huggingface.co/microsoft/Phi-3-mini-4k-instruct-gguf/resolve/main/Phi-3-mini-4k-instruct-q4.gguf", "Phi-3-mini-4k-instruct-q4.gguf"),
-                            Triple("Qwen 1.5 0.5B Chat Q4 (GGUF - Official)", "https://huggingface.co/Qwen/Qwen1.5-0.5B-Chat-GGUF/resolve/main/qwen1.5-0_5b-chat-q4_k_m.gguf", "qwen1.5-0_5b-chat-q4_k_m.gguf"),
-                            Triple("Gemma 2B IT (Official)", "https://storage.googleapis.com/mediapipe-models/llm/gemma-2b-it-cpu-int4.bin", "gemma-2b-it-cpu-int4.bin")
+                            Triple("TinyLlama 1.1B (Q4_K_M GGUF)", "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"),
+                            Triple("Phi-2 2.7B (Q4_K_M GGUF)", "https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf", "phi-2.Q4_K_M.gguf"),
+                            Triple("Gemma 2B IT (CPU - MediaPipe Native)", "https://storage.googleapis.com/mediapipe-models/llm/gemma-2b/gemma-2b-it-cpu-int4.bin", "gemma-2b-it-cpu-int4.bin")
                         )
                         
                         presets.forEach { (name, url, filename) ->
@@ -570,7 +587,7 @@ fun ChatScreen(
                         OutlinedTextField(
                             value = customModelFilename,
                             onValueChange = { customModelFilename = it },
-                            label = { Text("Local Filename (e.g. model.gguf or model.bin)", fontSize = 10.sp) },
+                            label = { Text("Local Filename (e.g. model.bin or model.gguf)", fontSize = 10.sp) },
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = electricBlue,
@@ -591,11 +608,9 @@ fun ChatScreen(
                                     val nameTrim = customModelFilename.trim()
                                     val urlTrim = customModelUrl.trim()
                                     
-                                    val hasGgufExt = nameTrim.endsWith(".gguf", ignoreCase = true) || urlTrim.contains(".gguf", ignoreCase = true)
                                     val hasBinExt = nameTrim.endsWith(".bin", ignoreCase = true) || urlTrim.contains(".bin", ignoreCase = true)
                                     
                                     val cleanedFilename = when {
-                                        hasGgufExt -> if (nameTrim.endsWith(".gguf", ignoreCase = true)) nameTrim else "$nameTrim.gguf"
                                         hasBinExt -> if (nameTrim.endsWith(".bin", ignoreCase = true)) nameTrim else "$nameTrim.bin"
                                         else -> if (nameTrim.endsWith(".bin", ignoreCase = true)) nameTrim else "$nameTrim.bin"
                                     }
@@ -619,18 +634,31 @@ fun ChatScreen(
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("Pull Down Custom Model", fontSize = 11.sp, color = Color.White)
                         }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        OutlinedButton(
+                            onClick = { launchModelPickerWithPermission() },
+                            modifier = Modifier.fillMaxWidth().height(36.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, electricBlue),
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = electricBlue),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Add,
+                                contentDescription = null,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Import Local Model File (.bin / .gguf)", fontSize = 11.sp)
+                        }
 
                         Spacer(modifier = Modifier.height(12.dp))
 
                         // Active engine state info badge
                         val engineBadgeText = when (val s = llmStatus) {
-                            is LlmStatus.Ready -> {
-                                if (s.modelName.lowercase(java.util.Locale.getDefault()).endsWith(".gguf")) {
-                                    "Local GGUF Sandbox"
-                                } else {
-                                    "Offline MediaPipe Active"
-                                }
-                            }
+                            is LlmStatus.Ready -> "Offline MediaPipe Active"
                             is LlmStatus.Loading -> "Switching/Loading..."
                             is LlmStatus.Error -> "State Error / Standby"
                             is LlmStatus.FallbackActive -> "State: Sandboxed Companion"
@@ -876,7 +904,7 @@ fun ChatScreen(
                                 subtitle = "How do I load Llama?",
                                 modifier = Modifier.weight(1f)
                             ) {
-                                viewModel.onUserInputChange("How do I download and import a quantized Llama/Sandbox model file into local sandbox storage?")
+                                viewModel.onUserInputChange("How do I download and import a MediaPipe compatible .bin model file into local storage?")
                             }
                         }
                     }

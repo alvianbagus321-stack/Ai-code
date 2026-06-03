@@ -33,7 +33,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     private val _webSearchEnabled = MutableStateFlow(true)
     val webSearchEnabled: StateFlow<Boolean> = _webSearchEnabled.asStateFlow()
 
-    private val _apiKey = MutableStateFlow("AQ.Ab8RN6LHT06ZRJotBp767pzblyQ0nPgHFIRaL_hbF6kIg433Fg")
+    private val _apiKey = MutableStateFlow("")
     val apiKey: StateFlow<String> = _apiKey.asStateFlow()
 
     private val _systemPrompt = MutableStateFlow("You are a helpful AI assistant. Answer user queries accurately and directly.")
@@ -71,6 +71,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val selectedModelName: StateFlow<String?> = repository.selectedModelName
     val downloadProgress: StateFlow<Float?> = repository.downloadProgress
     val downloadingModelName: StateFlow<String?> = repository.downloadingModelName
+    val downloadError: StateFlow<String?> = repository.downloadError
 
     fun selectModel(modelName: String) {
         repository.selectModel(modelName)

@@ -218,7 +218,7 @@ class OnlineLlmEngine {
             val body = requestBodyStr.toRequestBody(mediaType)
 
             val cleanedApiKey = apiKey.trim().removeSurrounding("\"").removeSurrounding("'")
-            val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$cleanedApiKey"
+            val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$cleanedApiKey"
 
             val request = Request.Builder()
                 .url(endpointUrl)
@@ -233,7 +233,7 @@ class OnlineLlmEngine {
                     val errMsg = "HTTP ${response.code}: ${response.message}\n$responseBodyStr"
                     Log.e(TAG, "Gemini API error: $errMsg")
                     return@withContext OnlineInferenceResult(
-                        text = "Connection failure calling Gemini API. Verify your API Key configuration in settings.\n\nDetails: ${response.message}",
+                        text = "Connection failure calling Gemini API. Verify your API Key configuration in settings.\n\nDetails: $errMsg",
                         searchResults = searchResults,
                         timeMs = duration,
                         isSuccess = false,

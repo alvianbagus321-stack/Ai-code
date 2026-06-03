@@ -172,6 +172,31 @@ class OfflineLlmEngine(private val context: Context) {
         }
     }
 
+    fun deleteModel(modelName: String): Boolean {
+        try {
+            val file = File(modelsDir, modelName)
+            if (file.exists()) {
+                if (_selectedModelName.value == modelName) {
+                    llmInference?.close()
+                    llmInference = null
+                    _selectedModelName.value = null
+                    _status.value = LlmStatus.FallbackActive("Active model deleted. Secure fallback engine active.")
+                }
+                val deleted = file.delete()
+                updateAvailableModelsList()
+                return deleted
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error deleting model $modelName: ${e.message}")
+        }
+        return false
+    }
+
+    fun getModelSize(modelName: String): Long {
+        val file = File(modelsDir, modelName)
+        return if (file.exists()) file.length() else 0L
+    }
+
     private fun initializeMediaPipe(modelFile: File) {
         _status.value = LlmStatus.Loading
         engineScope.launch {

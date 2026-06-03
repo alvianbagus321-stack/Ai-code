@@ -70,6 +70,7 @@ fun ChatScreen(
     val llmStatus by viewModel.llmStatus.collectAsState()
     val isOnlineMode by viewModel.isOnlineMode.collectAsState()
     val webSearchEnabled by viewModel.webSearchEnabled.collectAsState()
+    val isActiveSessionReadOnly by viewModel.isActiveSessionReadOnly.collectAsState()
 
     val contentResolver = context.contentResolver
     val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -102,6 +103,9 @@ fun ChatScreen(
     val devModeEnabled by viewModel.devModeEnabled.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
+    var showShareOfflineAlert by remember { mutableStateOf(false) }
+    var onlyCanSee by remember { mutableStateOf(false) }
     var customModelUrl by remember { mutableStateOf("") }
     var customModelFilename by remember { mutableStateOf("") }
     var devPassword by remember { mutableStateOf("") }
@@ -243,6 +247,107 @@ fun ChatScreen(
                     Divider(color = Color(0xFF334155), modifier = Modifier.padding(vertical = 4.dp))
 
                     if (selectedDrawerTab == 0) {
+                        var showImportDialog by remember { mutableStateOf(false) }
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clickable { showImportDialog = true },
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            border = BorderStroke(1.dp, Color(0xFF334155)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 10.dp, horizontal = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Import Shared Chat",
+                                    tint = electricBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Column {
+                                    Text(
+                                        text = "Import Shared Chat",
+                                        color = Color.White,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "Paste link or JSON code to view",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp
+                                    )
+                                }
+                            }
+                        }
+
+                        if (showImportDialog) {
+                            var importText by remember { mutableStateOf("") }
+                            AlertDialog(
+                                onDismissRequest = { showImportDialog = false },
+                                title = { Text("Import Shared Chat", color = Color.White) },
+                                text = {
+                                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Text(
+                                            text = "Paste the shared link or raw JSON chat data to import:",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 13.sp
+                                        )
+                                        OutlinedTextField(
+                                            value = importText,
+                                            onValueChange = { importText = it },
+                                            modifier = Modifier.fillMaxWidth(),
+                                            label = { Text("Paste Shared Link or Data") },
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedTextColor = Color.White,
+                                                unfocusedTextColor = Color(0xFFE2E8F0),
+                                                focusedBorderColor = electricBlue,
+                                                unfocusedBorderColor = Color(0xFF475569)
+                                            )
+                                        )
+                                    }
+                                },
+                                confirmButton = {
+                                    Button(
+                                        onClick = {
+                                            if (importText.isNotBlank()) {
+                                                var rawPayload = importText.trim()
+                                                if (rawPayload.contains("data=")) {
+                                                    rawPayload = rawPayload.substringAfter("data=").substringBefore("&")
+                                                }
+                                                try {
+                                                    val decodedBytes = android.util.Base64.decode(rawPayload, android.util.Base64.DEFAULT)
+                                                    val decodedStr = String(decodedBytes, Charsets.UTF_8)
+                                                    viewModel.importSharedSessionFromJson(decodedStr)
+                                                } catch (e: Exception) {
+                                                    viewModel.importSharedSessionFromJson(rawPayload)
+                                                }
+                                            }
+                                            showImportDialog = false
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = electricBlue)
+                                    ) {
+                                        Text("Import")
+                                    }
+                                },
+                                dismissButton = {
+                                    OutlinedButton(
+                                        onClick = { showImportDialog = false },
+                                        border = BorderStroke(1.dp, Color(0xFF475569)),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                                    ) {
+                                        Text("Cancel")
+                                    }
+                                },
+                                containerColor = Color(0xFF0F172A)
+                            )
+                        }
+
                         Box(
                             modifier = Modifier
                                 .weight(1f)
@@ -485,6 +590,7 @@ fun ChatScreen(
                                 ) {
                                     availableModels.forEach { model ->
                                         val isCurrent = model == selectedModelName
+                                        val modelSizeStr = viewModel.getModelSizeFormatted(model)
                                         Row(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -499,7 +605,7 @@ fun ChatScreen(
                                                     shape = RoundedCornerShape(6.dp)
                                                 )
                                                 .clickable { viewModel.selectModel(model) }
-                                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                                .padding(horizontal = 10.dp, vertical = 6.dp),
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Icon(
@@ -509,21 +615,39 @@ fun ChatScreen(
                                                 modifier = Modifier.size(14.dp)
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text(
-                                                text = model,
-                                                fontSize = 11.sp,
-                                                color = if (isCurrent) Color.White else Color(0xFF94A3B8),
-                                                fontFamily = FontFamily.Monospace,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis,
-                                                modifier = Modifier.weight(1f)
-                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = model,
+                                                    fontSize = 11.sp,
+                                                    color = if (isCurrent) Color.White else Color(0xFF94A3B8),
+                                                    fontFamily = FontFamily.Monospace,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = modelSizeStr,
+                                                    fontSize = 9.sp,
+                                                    color = Color(0xFF64748B)
+                                                )
+                                            }
                                             if (isCurrent) {
                                                 Icon(
                                                     imageVector = Icons.Default.Check,
                                                     contentDescription = "Active",
                                                     tint = Color(0xFF60A5FA),
                                                     modifier = Modifier.size(12.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                            }
+                                            IconButton(
+                                                onClick = { viewModel.deleteModel(model) },
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Delete,
+                                                    contentDescription = "Delete Model",
+                                                    tint = Color(0xFFEF4444),
+                                                    modifier = Modifier.size(14.dp)
                                                 )
                                             }
                                         }
@@ -812,9 +936,61 @@ fun ChatScreen(
                             modifier = Modifier.testTag("toggle_online_btn")
                         ) {
                             Icon(
-                                imageVector = if (isOnlineMode) Icons.Default.Share else Icons.Default.Lock,
+                                imageVector = if (isOnlineMode) Icons.Default.Refresh else Icons.Default.Lock,
                                 contentDescription = "Toggle Online/Offline Mode",
                                 tint = if (isOnlineMode) Color(0xFF60A5FA) else Color(0xFF94A3B8)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                try {
+                                    val exportText = viewModel.getExportText()
+                                    val file = java.io.File(context.cacheDir, "chat_debug_export.txt")
+                                    file.writeText(exportText)
+                                    
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        file
+                                    )
+                                    
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Chat Debug Export")
+                                        putExtra(android.content.Intent.EXTRA_TEXT, "Offline AI Chat History & System Debug Logs:")
+                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(intent, "Export Chat & Debug Logs"))
+                                    viewModel.logEvent("Exported chat and debug logs successfully.")
+                                } catch (e: Exception) {
+                                    viewModel.logEvent("Failed to export chat logs: ${e.message}")
+                                }
+                            },
+                            modifier = Modifier.testTag("export_logs_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.List,
+                                contentDescription = "Export Chat and Debug Logs",
+                                tint = Color(0xFF94A3B8)
+                            )
+                        }
+
+                        IconButton(
+                            onClick = {
+                                if (isOnlineMode) {
+                                    showShareDialog = true
+                                } else {
+                                    showShareOfflineAlert = true
+                                }
+                            },
+                            modifier = Modifier.testTag("share_chat_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Share Chat Session",
+                                tint = if (isOnlineMode) Color(0xFF60A5FA) else Color(0xFF475569)
                             )
                         }
 
@@ -1031,10 +1207,41 @@ fun ChatScreen(
                         )
                         .padding(16.dp)
                 ) {
-                    var isInputFocused by remember { mutableStateOf(false) }
-                    val controller = LocalSoftwareKeyboardController.current
-                    Column(
-                        modifier = Modifier
+                    if (isActiveSessionReadOnly) {
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(16.dp)),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            border = BorderStroke(1.5.dp, electricBlue.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "Read-Only Mode",
+                                    tint = electricBlue,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(10.dp))
+                                Text(
+                                    text = "👁️ Shared Chat (Read-Only Mode)",
+                                    color = Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } else {
+                        var isInputFocused by remember { mutableStateOf(false) }
+                        val controller = LocalSoftwareKeyboardController.current
+                        Column(
+                            modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(20.dp))
                             .background(cardSurfaceBg)
@@ -1160,6 +1367,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                }
                 }
             }
         }
@@ -1509,6 +1717,152 @@ fun ChatScreen(
                     modifier = Modifier.testTag("dialog_close_btn")
                 ) {
                     Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showShareOfflineAlert) {
+        AlertDialog(
+            onDismissRequest = { showShareOfflineAlert = false },
+            containerColor = Color(0xFF1E293B),
+            title = {
+                Text(
+                    text = "🌐 Online Share Only",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Text(
+                    text = "Sharing features are only available when Connected Online Mode is active. Please toggle Internet Connectivity from the top menu and try again.",
+                    color = Color(0xFF94A3B8),
+                    fontSize = 14.sp
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = { showShareOfflineAlert = false }
+                ) {
+                    Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            }
+        )
+    }
+
+    if (showShareDialog) {
+        AlertDialog(
+            onDismissRequest = { showShareDialog = false },
+            containerColor = Color(0xFF1E293B),
+            title = {
+                Text(
+                    text = "🔗 Share Chat Session",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            },
+            text = {
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Text(
+                        text = "Configure your shared chat link access permissions. Anyone with this link can import and view your conversation status.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 12.sp
+                    )
+                    
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFF0F172A))
+                            .clickable { onlyCanSee = !onlyCanSee }
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Only Can See (Read Only)",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "If true, recipient can only view/read the chat without responding.",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 11.sp
+                            )
+                        }
+                        Switch(
+                            checked = onlyCanSee,
+                            onCheckedChange = { onlyCanSee = it },
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = electricBlue,
+                                checkedTrackColor = electricBlue.copy(alpha = 0.4f)
+                            )
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        try {
+                            val json = org.json.JSONObject()
+                            json.put("title", "Shared AI Chat - " + (if (onlyCanSee) "Read Only" else "Interactive"))
+                            json.put("isReadOnly", onlyCanSee)
+                            
+                            val msgsArray = org.json.JSONArray()
+                            messages.forEach { msg ->
+                                val mObj = org.json.JSONObject()
+                                mObj.put("role", msg.role)
+                                mObj.put("content", msg.content)
+                                mObj.put("timestamp", msg.timestamp)
+                                mObj.put("engineType", msg.engineType)
+                                mObj.put("tokensPerSecond", msg.tokensPerSecond.toDouble())
+                                mObj.put("inferenceTimeMs", msg.inferenceTimeMs)
+                                if (msg.imageBase64 != null) {
+                                    mObj.put("imageBase64", msg.imageBase64)
+                                }
+                                msgsArray.put(mObj)
+                            }
+                            json.put("messages", msgsArray)
+                            
+                            val base64Payload = android.util.Base64.encodeToString(
+                                json.toString().toByteArray(Charsets.UTF_8),
+                                android.util.Base64.DEFAULT or android.util.Base64.NO_WRAP
+                            )
+                            
+                            val shareLink = "https://ais-pre-ek6fm2vweplj25ifmskb42-387891052669.asia-southeast1.run.app/shared?data=$base64Payload"
+                            
+                            val sendIntent = android.content.Intent().apply {
+                                action = android.content.Intent.ACTION_SEND
+                                putExtra(android.content.Intent.EXTRA_TEXT, "See my shared AI Chat session here! Click the link below to open in the app: \n\n$shareLink")
+                                type = "text/plain"
+                            }
+                            context.startActivity(android.content.Intent.createChooser(sendIntent, "Share Chat Session"))
+                            viewModel.logEvent("Generated and shared session link with Read-Only = $onlyCanSee")
+                        } catch (e: Exception) {
+                            viewModel.logEvent("Failed to generate shared session: ${e.message}")
+                        }
+                        showShareDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = electricBlue)
+                ) {
+                    Text("Generate & Share", color = Color.White, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showShareDialog = false },
+                    border = BorderStroke(1.dp, Color(0xFF475569)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Text("Cancel")
                 }
             }
         )

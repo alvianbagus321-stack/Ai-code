@@ -18,6 +18,15 @@ import kotlinx.coroutines.launch
 class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     private val TAG = "ChatViewModel"
 
+    private val _systemLogs = MutableStateFlow<List<String>>(listOf("System Log Initialized"))
+    val systemLogs: StateFlow<List<String>> = _systemLogs.asStateFlow()
+
+    fun logEvent(message: String) {
+        val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())
+        _systemLogs.update { list -> list + "[$timestamp] $message" }
+        Log.i("APP_LOG", "[$timestamp] $message")
+    }
+
     private val _activeSessionId = MutableStateFlow<String?>(null)
     val activeSessionId: StateFlow<String?> = _activeSessionId.asStateFlow()
 
@@ -71,6 +80,17 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
             started = SharingStarted.WhileSubscribed(5000),
             initialValue = emptyList()
         )
+
+    val isActiveSessionReadOnly: StateFlow<Boolean> = combine(
+        _activeSessionId,
+        sessions
+    ) { activeId, sessionList ->
+        sessionList.find { it.id == activeId }?.isReadOnly ?: false
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = false
+    )
 
     val llmStatus: StateFlow<LlmStatus> = repository.llmStatus
 
@@ -136,14 +156,17 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun toggleOnlineMode() {
         _isOnlineMode.value = !_isOnlineMode.value
+        logEvent("Toggled online mode. Active: ${_isOnlineMode.value}")
     }
 
     fun toggleWebSearch() {
         _webSearchEnabled.value = !_webSearchEnabled.value
+        logEvent("Toggled web search. Active: ${_webSearchEnabled.value}")
     }
 
     fun updateApiKey(newKey: String) {
         _apiKey.value = newKey
+        logEvent("API Key updated (Length: ${newKey.length})")
     }
 
     fun sendMessage() {
@@ -155,6 +178,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         _currentImageBase64.value = null
         _isGenerating.value = true
         
+        logEvent("Sending message. Prompt length: ${prompt.length} (Has Image: ${imgBase64 != null})")
         viewModelScope.launch {
             try {
                 var currentId = _activeSessionId.value
@@ -162,6 +186,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     currentId = repository.createNewSession("Prompting...")
                     _activeSessionId.value = currentId
                 }
+                logEvent("Routing request to ${if (_isOnlineMode.value) "Online Gemini" else "Offline LLM"} within session $currentId")
                 repository.sendMessageAndAwaitResponse(
                     sessionId = currentId,
                     promptText = prompt,
@@ -171,7 +196,9 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     systemPrompt = _systemPrompt.value,
                     imageBase64 = imgBase64
                 )
+                logEvent("Message response received and saved successfully.")
             } catch (e: Exception) {
+                logEvent("Error sending message: ${e.message}")
                 Log.e(TAG, "Error sending message: ${e.message}", e)
             } finally {
                 _isGenerating.value = false
@@ -192,6 +219,113 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun purgeCache() {
         repository.purgeCustomModels()
+        logEvent("Purged all custom models from local storage.")
+    }
+
+    fun deleteModel(modelName: String) {
+        val deleted = repository.deleteModel(modelName)
+        if (deleted) {
+            logEvent("Deleted model $modelName successfully.")
+        } else {
+            logEvent("Failed to delete model $modelName.")
+        }
+    }
+
+    fun getModelSizeFormatted(modelName: String): String {
+        val bytes = repository.getModelSize(modelName)
+        if (bytes <= 0) return "0 B"
+        val kb = bytes / 1024.0
+        val mb = kb / 1024.0
+        val gb = mb / 1024.0
+        return when {
+            gb >= 1.0 -> String.format(java.util.Locale.US, "%.2f GB", gb)
+            mb >= 1.0 -> String.format(java.util.Locale.US, "%.1f MB", mb)
+            else -> String.format(java.util.Locale.US, "%.1f KB", kb)
+        }
+    }
+
+    fun getExportText(): String {
+        val sb = java.lang.StringBuilder()
+        sb.append("=========================================\n")
+        sb.append("         OFFLINE AI CHAT EXPORT          \n")
+        sb.append("=========================================\n")
+        sb.append("Session ID: ${activeSessionId.value ?: "None"}\n")
+        sb.append("Current Time: ${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())}\n")
+        sb.append("Online Mode Active: ${isOnlineMode.value}\n")
+        sb.append("Web Search Active: ${webSearchEnabled.value}\n")
+        sb.append("Developer Override Active: ${devModeEnabled.value}\n")
+        sb.append("Bypass Filter Active: ${repository.bypassFilterActive.value}\n")
+        sb.append("LLM Status: ${llmStatus.value}\n")
+        sb.append("System Prompt: ${systemPrompt.value}\n")
+        sb.append("Selected Model: ${selectedModelName.value ?: "Default/None"}\n")
+        sb.append("\n")
+        sb.append("--- CHAT MESSAGES ---\n")
+        val currentMsgs = messages.value
+        if (currentMsgs.isEmpty()) {
+            sb.append("(No messages in this session)\n")
+        } else {
+            currentMsgs.forEach { msg ->
+                val timeStr = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(msg.timestamp))
+                sb.append("[$timeStr] ${msg.role.uppercase()}: ${msg.content}\n")
+                if (msg.engineType.isNotEmpty()) {
+                    sb.append("  [Engine: ${msg.engineType} | Speed: ${msg.tokensPerSecond} t/s | Inference Time: ${msg.inferenceTimeMs}ms]\n")
+                }
+                if (msg.imageBase64 != null) {
+                    sb.append("  [Attached Image Base64 Length: ${msg.imageBase64.length}]\n")
+                }
+                sb.append("\n")
+            }
+        }
+        sb.append("--- SYSTEM LOGS ---\n")
+        systemLogs.value.forEach { log ->
+            sb.append(log).append("\n")
+        }
+        sb.append("=========================================\n")
+        return sb.toString()
+    }
+
+    fun importSharedSessionFromJson(jsonStr: String) {
+        viewModelScope.launch {
+            try {
+                val json = org.json.JSONObject(jsonStr)
+                val title = json.optString("title", "Imported Shared Chat")
+                val isReadOnly = json.optBoolean("isReadOnly", false)
+                val messagesArray = json.optJSONArray("messages")
+                
+                val chatMessagesList = mutableListOf<ChatMessage>()
+                if (messagesArray != null) {
+                    for (i in 0 until messagesArray.length()) {
+                        val mObj = messagesArray.getJSONObject(i)
+                        val role = mObj.optString("role", "user")
+                        val content = mObj.optString("content", "")
+                        val timestamp = mObj.optLong("timestamp", System.currentTimeMillis())
+                        val engineType = mObj.optString("engineType", "")
+                        val tokensPerSecond = mObj.optDouble("tokensPerSecond", 0.0).toFloat()
+                        val inferenceTimeMs = mObj.optLong("inferenceTimeMs", 0L)
+                        val imageBase64 = mObj.optString("imageBase64", null).let { if (it == "null" || it.isEmpty()) null else it }
+                        
+                        chatMessagesList.add(
+                            ChatMessage(
+                                sessionId = "",
+                                role = role,
+                                content = content,
+                                timestamp = timestamp,
+                                engineType = engineType,
+                                tokensPerSecond = tokensPerSecond,
+                                inferenceTimeMs = inferenceTimeMs,
+                                imageBase64 = imageBase64
+                            )
+                        )
+                    }
+                }
+                
+                val newSessionId = repository.importSharedSession(title, isReadOnly, chatMessagesList)
+                _activeSessionId.value = newSessionId
+                logEvent("Successfully imported shared session: $title (ReadOnly: $isReadOnly)")
+            } catch (e: Exception) {
+                logEvent("Failed to import shared session: ${e.message}")
+            }
+        }
     }
 
     private fun queryFileName(uri: Uri, context: Context): String? {

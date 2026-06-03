@@ -54,10 +54,20 @@ class ChatRepository(
         return chatDao.getMessagesForSession(sessionId)
     }
 
-    suspend fun createNewSession(title: String = "New Chat Session"): String {
+    suspend fun createNewSession(title: String = "New Chat Session", isReadOnly: Boolean = false): String {
         val id = UUID.randomUUID().toString()
-        val session = ChatSession(id = id, title = title)
+        val session = ChatSession(id = id, title = title, isReadOnly = isReadOnly)
         chatDao.insertSession(session)
+        return id
+    }
+
+    suspend fun importSharedSession(title: String, isReadOnly: Boolean, messages: List<ChatMessage>): String {
+        val id = UUID.randomUUID().toString()
+        val session = ChatSession(id = id, title = title, isReadOnly = isReadOnly)
+        chatDao.insertSession(session)
+        messages.forEach { msg ->
+            chatDao.insertMessage(msg.copy(sessionId = id, id = 0))
+        }
         return id
     }
 
@@ -190,5 +200,13 @@ class ChatRepository(
 
     fun purgeCustomModels() {
         offlineLlmEngine.purgeLoadedModels()
+    }
+
+    fun deleteModel(modelName: String): Boolean {
+        return offlineLlmEngine.deleteModel(modelName)
+    }
+
+    fun getModelSize(modelName: String): Long {
+        return offlineLlmEngine.getModelSize(modelName)
     }
 }

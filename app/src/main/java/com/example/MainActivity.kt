@@ -53,6 +53,9 @@ class MainActivity : ComponentActivity() {
             ChatViewModel.Factory(repository)
         )[ChatViewModel::class.java]
 
+        // 3. Process any incoming deep-linked session data
+        intent?.data?.let { handleIncomingUri(it, viewModel) }
+
         enableEdgeToEdge()
         setContent {
             MyApplicationTheme {
@@ -120,6 +123,29 @@ class MainActivity : ComponentActivity() {
                     viewModel = viewModel,
                     modifier = Modifier.fillMaxSize()
                 )
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val database = ChatDatabase.getDatabase(applicationContext)
+        val llmEngine = OfflineLlmEngine(applicationContext)
+        val repository = ChatRepository(database.chatDao(), llmEngine)
+        val viewModel = ViewModelProvider(this, ChatViewModel.Factory(repository))[ChatViewModel::class.java]
+        intent.data?.let { handleIncomingUri(it, viewModel) }
+    }
+
+    private fun handleIncomingUri(uri: android.net.Uri, viewModel: ChatViewModel) {
+        val base64Data = uri.getQueryParameter("data")
+        if (!base64Data.isNullOrBlank()) {
+            try {
+                val decodedBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                val jsonStr = String(decodedBytes, Charsets.UTF_8)
+                viewModel.importSharedSessionFromJson(jsonStr)
+            } catch (e: Exception) {
+                viewModel.logEvent("Failed parsing deep-linked shared chat: ${e.message}")
             }
         }
     }

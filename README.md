@@ -19,10 +19,3 @@ View your app in AI Studio: https://ai.studio/apps/c8eb5072-eba4-4584-8f23-50242
 4. Create a file named `.env` in the project directory and set `GEMINI_API_KEY` in that file to your Gemini API key (see `.env.example` for an example)
 5. Remove this line from the app's `build.gradle.kts` file: `signingConfig = signingConfigs.getByName("debugConfig")`
 6. Run the app on an emulator or physical device
-
-update: whats new? 
-- add image chat for ai
-- fix offline ai bug
-- fix failed download
-- add storage permission and other
-- ect.

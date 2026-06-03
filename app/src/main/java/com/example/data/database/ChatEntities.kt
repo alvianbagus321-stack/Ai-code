@@ -9,7 +9,8 @@ import androidx.room.PrimaryKey
 data class ChatSession(
     @PrimaryKey val id: String,
     val title: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val isReadOnly: Boolean = false
 )
 
 @Entity(

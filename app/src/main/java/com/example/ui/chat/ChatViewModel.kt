@@ -100,6 +100,11 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val downloadingModelName: StateFlow<String?> = repository.downloadingModelName
     val downloadError: StateFlow<String?> = repository.downloadError
 
+    // GGUF fields
+    val ggufDownloadProgress: StateFlow<Float?> = repository.ggufDownloadProgress
+    val ggufDownloadingModelName: StateFlow<String?> = repository.ggufDownloadingModelName
+    val ggufDownloadError: StateFlow<String?> = repository.ggufDownloadError
+
     val devModeEnabled: StateFlow<Boolean> = repository.devModeEnabled
     fun attemptEnableDevMode(password: String): Boolean = repository.attemptEnableDevMode(password)
     fun disableDevMode() = repository.disableDevMode()
@@ -118,6 +123,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun cancelDownload() {
         repository.cancelDownload()
+    }
+
+    fun downloadGgufModel(url: String, filename: String) {
+        repository.downloadGgufModel(url, filename)
+    }
+
+    fun cancelGgufDownload() {
+        repository.cancelGgufDownload()
     }
 
     init {

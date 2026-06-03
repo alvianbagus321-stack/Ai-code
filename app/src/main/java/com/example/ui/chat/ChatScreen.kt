@@ -100,6 +100,12 @@ fun ChatScreen(
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val downloadingModelName by viewModel.downloadingModelName.collectAsState()
     val downloadError by viewModel.downloadError.collectAsState()
+    
+    // GGUF Download states
+    val ggufDownloadProgress by viewModel.ggufDownloadProgress.collectAsState()
+    val ggufDownloadingModelName by viewModel.ggufDownloadingModelName.collectAsState()
+    val ggufDownloadError by viewModel.ggufDownloadError.collectAsState()
+
     val devModeEnabled by viewModel.devModeEnabled.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
@@ -108,9 +114,12 @@ fun ChatScreen(
     var onlyCanSee by remember { mutableStateOf(false) }
     var customModelUrl by remember { mutableStateOf("") }
     var customModelFilename by remember { mutableStateOf("") }
+    var customGgufUrl by remember { mutableStateOf("") }
+    var customGgufFilename by remember { mutableStateOf("") }
     var devPassword by remember { mutableStateOf("") }
     var showDevError by remember { mutableStateOf(false) }
     var selectedDrawerTab by remember { mutableStateOf(0) }
+    var showModelGuide by remember { mutableStateOf(false) }
 
     // Launcher for file picking to load binary model file (.bin) from downloads
     val modelPickerLauncher = rememberLauncherForActivityResult(
@@ -510,6 +519,85 @@ fun ChatScreen(
                             color = electricBlue,
                             modifier = Modifier.padding(bottom = 8.dp)
                         )
+
+                        // 1b. If GGUF is actively downloading, show visual feedback and progress
+                        if (ggufDownloadingModelName != null) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                                    .border(1.dp, Color(0xFFA7F3D0).copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "Downloading GGUF (llama.cpp)...",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFA7F3D0)
+                                        )
+                                        IconButton(
+                                            onClick = { viewModel.cancelGgufDownload() },
+                                            modifier = Modifier.size(20.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Close,
+                                                contentDescription = "Cancel GGUF Download",
+                                                tint = Color.Red,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = ggufDownloadingModelName ?: "",
+                                        fontSize = 11.sp,
+                                        color = Color.White,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    val progress = ggufDownloadProgress ?: 0f
+                                    LinearProgressIndicator(
+                                        progress = progress,
+                                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                                        color = Color(0xFFA7F3D0),
+                                        trackColor = Color(0xFF334155)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "${(progress * 100).toInt()}% completed",
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF94A3B8),
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                            }
+                        }
+
+                        if (ggufDownloadError != null) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                                    .border(1.dp, Color.Red.copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF450a0a)),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text("GGUF Download Error", color = Color.Red, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(text = ggufDownloadError ?: "", color = Color.White, fontSize = 11.sp)
+                                }
+                            }
+                        }
 
                         // 1. If actively downloading, show visual feedback and progress
                         if (downloadingModelName != null) {
@@ -923,23 +1011,335 @@ fun ChatScreen(
                             Text("Pull Down Custom Model", fontSize = 11.sp, color = Color.White)
                         }
                         
-                        Spacer(modifier = Modifier.height(8.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
                         
-                        OutlinedButton(
-                            onClick = { launchModelPickerWithPermission() },
-                            modifier = Modifier.fillMaxWidth().height(36.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, electricBlue),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = electricBlue),
-                            contentPadding = PaddingValues(0.dp)
+                        // Dedicated llama.cpp GGUF Section
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(
+                                    width = 1.dp,
+                                    color = Color(0xFF047857).copy(alpha = 0.6f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Add,
-                                contentDescription = null,
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Import Local Model File (.bin / .gguf)", fontSize = 11.sp)
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "🦙 GGUF RUNTIME DOWNLOADER (llama.cpp)",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFA7F3D0)
+                                )
+                                Spacer(modifier = Modifier.height(3.dp))
+                                Text(
+                                    text = "Dedicated engine for loading quantized GGUF format variables natively.",
+                                    fontSize = 9.sp,
+                                    color = Color(0xFF94A3B8)
+                                )
+                                Spacer(modifier = Modifier.height(10.dp))
+
+                                val ggufPresets = listOf(
+                                    Triple("SmolLM2 360M IT Q8_0 GGUF (Light/Compact - 384MB)", "https://huggingface.co/ngxson/SmolLM2-360M-Instruct-Q8_0-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf", "smollm2-360m-instruct-q8_0.gguf"),
+                                    Triple("SmolLM2 135M IT Q8_0 GGUF (Ultra-Light - 152MB)", "https://huggingface.co/ngxson/SmolLM2-135M-Instruct-Q8_0-GGUF/resolve/main/smollm2-135m-instruct-q8_0.gguf", "smollm2-135m-instruct-q8_0.gguf")
+                                )
+
+                                ggufPresets.forEach { (name, url, filename) ->
+                                    val alreadyInstalled = availableModels.contains(filename)
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 3.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(Color(0xFF1E293B))
+                                            .border(
+                                                width = 1.dp,
+                                                color = if (alreadyInstalled) Color.Transparent else Color(0xFF334155),
+                                                shape = RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = name,
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = if (alreadyInstalled) securityEmerald else Color.White
+                                            )
+                                            Text(
+                                                text = if (alreadyInstalled) "Installed & Loaded" else "Tap download icon to auto-fetch GGUF",
+                                                fontSize = 8.sp,
+                                                color = Color(0xFF94A3B8)
+                                            )
+                                        }
+                                        if (alreadyInstalled) {
+                                            Icon(
+                                                imageVector = Icons.Default.Check,
+                                                contentDescription = "Installed",
+                                                tint = securityEmerald,
+                                                modifier = Modifier.size(14.dp)
+                                            )
+                                        } else {
+                                            IconButton(
+                                                onClick = { viewModel.downloadGgufModel(url, filename) },
+                                                enabled = ggufDownloadingModelName == null,
+                                                modifier = Modifier.size(24.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ArrowDropDown,
+                                                    contentDescription = "Download GGUF model",
+                                                    tint = if (ggufDownloadingModelName == null) Color(0xFFA7F3D0) else Color(0xFF64748B),
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(10.dp))
+                                Text(
+                                    text = "🔗 PULL CUSTOM GGUF LINK",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF94A3B8)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                
+                                OutlinedTextField(
+                                    value = customGgufUrl,
+                                    onValueChange = { customGgufUrl = it },
+                                    label = { Text("Model GGUF Download URL", fontSize = 9.sp) },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFFA7F3D0),
+                                        unfocusedBorderColor = Color(0xFF334155),
+                                        focusedLabelColor = Color(0xFFA7F3D0),
+                                        unfocusedLabelColor = Color(0xFF64748B),
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedContainerColor = Color(0xFF1E293B),
+                                        unfocusedContainerColor = Color(0xFF1E293B)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                OutlinedTextField(
+                                    value = customGgufFilename,
+                                    onValueChange = { customGgufFilename = it },
+                                    label = { Text("Local GGUF Filename (e.g. smollm.gguf)", fontSize = 9.sp) },
+                                    singleLine = true,
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = Color(0xFFA7F3D0),
+                                        unfocusedBorderColor = Color(0xFF334155),
+                                        focusedLabelColor = Color(0xFFA7F3D0),
+                                        unfocusedLabelColor = Color(0xFF64748B),
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        focusedContainerColor = Color(0xFF1E293B),
+                                        unfocusedContainerColor = Color(0xFF1E293B)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Button(
+                                    onClick = {
+                                        if (customGgufUrl.isNotBlank() && customGgufFilename.isNotBlank()) {
+                                            val nameTrim = customGgufFilename.trim()
+                                            val urlTrim = customGgufUrl.trim()
+                                            val cleanedFilename = if (nameTrim.endsWith(".gguf", ignoreCase = true)) nameTrim else "$nameTrim.gguf"
+                                            
+                                            viewModel.downloadGgufModel(urlTrim, cleanedFilename)
+                                            customGgufUrl = ""
+                                            customGgufFilename = ""
+                                        }
+                                    },
+                                    enabled = ggufDownloadingModelName == null && customGgufUrl.isNotBlank() && customGgufFilename.isNotBlank(),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF047857)),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.fillMaxWidth().height(32.dp),
+                                    contentPadding = PaddingValues(0.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.ArrowDropDown,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Pull Down Custom GGUF", fontSize = 10.sp, color = Color.White)
+                                }
+
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text(
+                                    text = "ℹ️ SPESIFIKASI GGUF: Sangat hemat memori karena menggunakan kuantisasi integer 8-bit (Q8_0) atau 4-bit. Llama.cpp dioptimalkan untuk thread CPU, sehingga aman berjalan di semua tipe HP Android tanpa membuat panas berlebih.",
+                                    fontSize = 8.sp,
+                                    lineHeight = 10.sp,
+                                    color = Color(0xFFA7F3D0).copy(alpha = 0.82f)
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        
+                        // Separate Import Buttons
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = { launchModelPickerWithPermission() },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, electricBlue),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = electricBlue),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("Import .bin", fontSize = 11.sp, maxLines = 1)
+                            }
+                            OutlinedButton(
+                                onClick = { launchModelPickerWithPermission() },
+                                modifier = Modifier.weight(1f).height(36.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFA7F3D0)),
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFA7F3D0)),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("Import .gguf", fontSize = 11.sp, maxLines = 1)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+
+                        // TUTORIAL & FORMAT GUIDE (INTERACTIVE & EXPANDABLE)
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .border(
+                                    width = 1.dp,
+                                    color = if (showModelGuide) electricBlue else Color(0xFF334155),
+                                    shape = RoundedCornerShape(10.dp)
+                                ),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { showModelGuide = !showModelGuide }
+                                        .padding(vertical = 4.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = Color(0xFFFBBF24),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "Panduan Download & Format LLM",
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color.White
+                                        )
+                                    }
+                                    Icon(
+                                        imageVector = if (showModelGuide) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                        contentDescription = "Toggle Guide",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                
+                                AnimatedVisibility(visible = showModelGuide) {
+                                    Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                                        Text(
+                                            text = "🤔 Panduan Eksklusif: .bin vs .gguf secara Detail",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFF60A5FA),
+                                            modifier = Modifier.padding(bottom = 2.dp)
+                                        )
+                                        Text(
+                                            text = "Apakah model offline bisa dijalankan langsung? Jawabannya: Bisa, tetapi tidak otomatis.\n\n" +
+                                                   "✅ BISA membuat aplikasi Android mendukung .bin dan .gguf sekaligus.\n" +
+                                                   "❌ TIDAK BISA hanya dengan mengganti nama file dari .gguf menjadi .bin.\n" +
+                                                   "❌ TIDAK BISA memaksa MediaPipe (engine bawaan aplikasi ini) menjalankan GGUF tanpa menambahkan runtime terpisah seperti llama.cpp.\n\n" +
+                                                   "Ibaratnya, format .bin dan .gguf itu bukan sekadar perbedaan format file biasa. Mereka lebih seperti kaset PlayStation dan cartridge Nintendo. Isinya sama-sama game (model AI), tetapi mesin pembaca (runtime)-nya berbeda total! Menempelkan label baru di kaset tidak akan membuat konsol lain tiba-tiba mengerti cara membacanya.",
+                                            fontSize = 9.sp,
+                                            lineHeight = 12.sp,
+                                            color = Color(0xFFE2E8F0)
+                                        )
+                                        
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        
+                                        Text(
+                                            text = "🛠️ Dua Jenis Backend Mesin AI:",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFA7F3D0),
+                                            modifier = Modifier.padding(bottom = 4.dp)
+                                        )
+                                        
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row {
+                                                Text("• ", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFA7F3D0))
+                                                Text("llama.cpp → Digunakan khusus untuk memuat format `.gguf` (Umumnya dipakai di ekosistem PC, Mac, Linux, atau Server CLI).", fontSize = 9.sp, color = Color(0xFFCBD5E1), lineHeight = 11.sp)
+                                            }
+                                            Row {
+                                                Text("• ", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFA7F3D0))
+                                                Text("MediaPipe / TFLite (Aplikasi Ini) → Khusus format `.bin`. Didesain oleh Google untuk perangkat mobile agar hemat daya & dapat mengakses penuh akselerasi GPU handphone Android Anda secara native.", fontSize = 9.sp, color = Color(0xFFCBD5E1), lineHeight = 11.sp)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        
+                                        Text(
+                                            text = "💡 Tutorial Langkah demi Langkah Mengunduh Model:",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFFBBF24),
+                                            modifier = Modifier.padding(bottom = 4.dp)
+                                        )
+                                        
+                                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                            Row {
+                                                Text("Step 1: ", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBF24))
+                                                Text("Cari model AI berukuran kecil (seperti SmolLM2, Gemma 2B, Phi-2) di Hugging Face yang dikonversi khusus ke format “.bin” milik MediaPipe.", fontSize = 9.sp, color = Color(0xFFCBD5E1), lineHeight = 11.sp)
+                                            }
+                                            Row {
+                                                Text("Step 2: ", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBF24))
+                                                Text("Salin tautan download langsung (Direct URL) file .bin (Contoh: https://huggingface.co/ngxson/smollm2-360m-instruct-bin/resolve/main/model.bin).", fontSize = 9.sp, color = Color(0xFFCBD5E1), lineHeight = 11.sp)
+                                            }
+                                            Row {
+                                                Text("Step 3: ", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBF24))
+                                                Text("Tempel link di kolom “PULL CUSTOM ENGRAM LINK” di atas, beri nama file akhirannya .bin (contoh: 'smollm2.bin'), kemudian klik tombol “Pull Down Custom Model”. Tonton kemajuan progress download secara real-time.", fontSize = 9.sp, color = Color(0xFFCBD5E1), lineHeight = 11.sp)
+                                            }
+                                            Row {
+                                                Text("Step 4: ", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBF24))
+                                                Text("Atau jika telah mengunduh lewat browser HP, tap tombol “Import Local Model File” dan pilih file .bin dari memori HP Anda untuk memindahkannya ke sistem Sandbox terisolasi aplikasi.", fontSize = 9.sp, color = Color(0xFFCBD5E1), lineHeight = 11.sp)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+                                        
+                                        Text(
+                                            text = "🚀 Bagaimana tentang model yang berukuran besar?",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = Color(0xFFF87171),
+                                            modifier = Modifier.padding(bottom = 2.dp)
+                                        )
+                                        Text(
+                                            text = "Model lokal offline didesain agar berukuran mini demi menjaga RAM handphone Anda tetap lega. Untuk model AI besar (seperti Llama-70B, DeepSeek, atau Qwen besar) yang tidak mungkin muat di HP, Anda bisa mengaktifkan mode ONLINE di setelan di atas untuk langsung terhubung gratis dan lancar ke infrastruktur Google Gemini Cloud terkuat tanpa memakan penyimpanan internal!",
+                                            fontSize = 9.sp,
+                                            lineHeight = 12.sp,
+                                            color = Color(0xFFE2E8F0)
+                                        )
+                                    }
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
@@ -1045,60 +1445,46 @@ fun ChatScreen(
                     },
                     title = {
                         Column {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (isOnlineMode) "Connected AI" else "Offline AI",
-                                    fontSize = 18.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = Color.White
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                
-                                // Dynamic isolated notification tag
-                                Row(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            if (isOnlineMode) electricBlue.copy(alpha = 0.15f)
-                                            else securityEmerald.copy(alpha = 0.15f)
-                                        )
-                                        .padding(horizontal = 6.dp, vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = if (isOnlineMode) Icons.Default.Share else Icons.Default.Lock,
-                                        contentDescription = null,
-                                        tint = if (isOnlineMode) Color(0xFF60A5FA) else securityEmerald,
-                                        modifier = Modifier.size(10.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = if (isOnlineMode) "CONNECTED" else "ISOLATED",
-                                        color = if (isOnlineMode) Color(0xFF60A5FA) else securityEmerald,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                }
-                            }
-                            
-                            // LLM State subtitle
-                            val statusText = if (isOnlineMode) {
-                                if (webSearchEnabled) "Gemini 2.5 Flash (Grounded Search Active)"
-                                else "Gemini 2.5 Flash (Online Assistant)"
-                            } else {
-                                when (llmStatus) {
-                                    is LlmStatus.Ready -> "MediaPipe Ready"
-                                    is LlmStatus.Loading -> "Importing model binary..."
-                                    is LlmStatus.Error -> "Hardware Fallback active"
-                                    is LlmStatus.FallbackActive -> "Offline Llama / Local Sandbox"
-                                    LlmStatus.Uninitialized -> "Initializing Local Stack..."
-                                }
-                            }
                             Text(
-                                text = statusText,
-                                fontSize = 11.sp,
-                                color = Color(0xFF94A3B8)
+                                text = if (isOnlineMode) "Cloud Hybrid" else "Isolated Vault",
+                                fontSize = 17.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.White
                             )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val dotColor = if (isOnlineMode) Color(0xFF60A5FA) else securityEmerald
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(dotColor)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                
+                                val statusText = if (isOnlineMode) {
+                                    if (webSearchEnabled) "Cloud Link • Grounded Search"
+                                    else "Cloud Link • Gemini Flash"
+                                } else {
+                                    val modelName = selectedModelName?.substringBeforeLast(".") ?: "Local Sandbox"
+                                    when (llmStatus) {
+                                        is LlmStatus.Ready -> "Private • $modelName"
+                                        is LlmStatus.Loading -> "Loading • $modelName"
+                                        is LlmStatus.Error -> "Offline • Sandbox Active"
+                                        is LlmStatus.FallbackActive -> "Private • $modelName"
+                                        LlmStatus.Uninitialized -> "Private • Standard"
+                                    }
+                                }
+                                Text(
+                                    text = statusText,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFF94A3B8),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
                         }
                     },
                     actions = {
@@ -1107,7 +1493,7 @@ fun ChatScreen(
                             modifier = Modifier.testTag("toggle_online_btn")
                         ) {
                             Icon(
-                                imageVector = if (isOnlineMode) Icons.Default.Refresh else Icons.Default.Lock,
+                                imageVector = if (isOnlineMode) Icons.Default.Share else Icons.Default.Lock,
                                 contentDescription = "Toggle Online/Offline Mode",
                                 tint = if (isOnlineMode) Color(0xFF60A5FA) else Color(0xFF94A3B8)
                             )

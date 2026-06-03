@@ -28,6 +28,11 @@ class ChatRepository(
     val downloadingModelName: StateFlow<String?> = offlineLlmEngine.downloadingModelName
     val downloadError: StateFlow<String?> = offlineLlmEngine.downloadError
 
+    // GGUF Download states
+    val ggufDownloadProgress: StateFlow<Float?> = offlineLlmEngine.ggufDownloadProgress
+    val ggufDownloadingModelName: StateFlow<String?> = offlineLlmEngine.ggufDownloadingModelName
+    val ggufDownloadError: StateFlow<String?> = offlineLlmEngine.ggufDownloadError
+
     val devModeEnabled: StateFlow<Boolean> = offlineLlmEngine.devModeEnabled
     val bypassFilterActive: StateFlow<Boolean> = offlineLlmEngine.bypassFilterActive
     
@@ -48,6 +53,14 @@ class ChatRepository(
 
     fun cancelDownload() {
         offlineLlmEngine.cancelDownload()
+    }
+
+    fun downloadGgufModel(url: String, filename: String) {
+        offlineLlmEngine.downloadGgufModel(url, filename)
+    }
+
+    fun cancelGgufDownload() {
+        offlineLlmEngine.cancelGgufDownload()
     }
 
     fun getMessagesForSession(sessionId: String): Flow<List<ChatMessage>> {

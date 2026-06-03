@@ -26,8 +26,10 @@ sealed class LlmStatus {
 class OfflineLlmEngine(private val context: Context) {
     private val TAG = "OfflineLlmEngine"
     private var llmInference: LlmInference? = null
+    private val llamaCppEngine = LlamaCppEngine(context)
+    
     val isModelLoaded: Boolean
-        get() = llmInference != null
+        get() = llmInference != null || llamaCppEngine.isModelLoaded
         
     private val engineScope = CoroutineScope(Dispatchers.IO)
     private val sandboxGgufFallbackEngine = OnlineLlmEngine()
@@ -41,20 +43,32 @@ class OfflineLlmEngine(private val context: Context) {
     private val _selectedModelName = MutableStateFlow<String?>(null)
     val selectedModelName: StateFlow<String?> = _selectedModelName
 
+    // .bin downloader states (MediaPipe)
     val downloadProgress: StateFlow<Float?> = ModelDownloader.downloadProgress
-
     val downloadingModelName: StateFlow<String?> = ModelDownloader.downloadingModelName
-
     val downloadError: StateFlow<String?> = ModelDownloader.downloadError
+
+    // .gguf downloader states (LlamaCpp)
+    val ggufDownloadProgress: StateFlow<Float?> = GgufModelDownloader.downloadProgress
+    val ggufDownloadingModelName: StateFlow<String?> = GgufModelDownloader.downloadingModelName
+    val ggufDownloadError: StateFlow<String?> = GgufModelDownloader.downloadError
 
     fun downloadModel(modelUrl: String, displayName: String) {
         if (ModelDownloader.downloadingModelName.value != null) return
-        
         ModelDownloader.startDownload(context, modelUrl, displayName)
     }
 
     fun cancelDownload() {
         ModelDownloader.cancel(context)
+    }
+
+    fun downloadGgufModel(modelUrl: String, displayName: String) {
+        if (GgufModelDownloader.downloadingModelName.value != null) return
+        GgufModelDownloader.startDownload(context, modelUrl, displayName)
+    }
+
+    fun cancelGgufDownload() {
+        GgufModelDownloader.cancel(context)
     }
 
     private val modelsDir = File(context.filesDir, "local_llm_models").apply {
@@ -101,7 +115,12 @@ class OfflineLlmEngine(private val context: Context) {
         val modelFile = File(modelsDir, modelName)
         if (modelFile.exists()) {
             _selectedModelName.value = modelName
-            initializeMediaPipe(modelFile)
+            val ext = modelFile.extension.lowercase(Locale.getDefault())
+            if (ext == "gguf") {
+                initializeLlamaCpp(modelFile)
+            } else {
+                initializeMediaPipe(modelFile)
+            }
         }
     }
 
@@ -115,12 +134,38 @@ class OfflineLlmEngine(private val context: Context) {
             val mostRecentModel = files.maxByOrNull { it.lastModified() }
             if (mostRecentModel != null) {
                 _selectedModelName.value = mostRecentModel.name
-                initializeMediaPipe(mostRecentModel)
+                val ext = mostRecentModel.extension.lowercase(Locale.getDefault())
+                if (ext == "gguf") {
+                    initializeLlamaCpp(mostRecentModel)
+                } else {
+                    initializeMediaPipe(mostRecentModel)
+                }
             } else {
                 _status.value = LlmStatus.FallbackActive("Offline Llama / Local Sandbox Active. (Import model .bin or .gguf to switch)")
             }
         } else {
             _status.value = LlmStatus.FallbackActive("Offline Llama / Local Sandbox Active. (Import model .bin or .gguf to switch)")
+        }
+    }
+
+    private fun initializeLlamaCpp(modelFile: File) {
+        _status.value = LlmStatus.Loading
+        engineScope.launch {
+            try {
+                llmInference?.close()
+                llmInference = null
+                
+                val success = llamaCppEngine.loadModel(modelFile)
+                if (success) {
+                    _status.value = LlmStatus.Ready(modelFile.name, modelFile.absolutePath)
+                    Log.d(TAG, "llama.cpp GGUF loaded successfully: ${modelFile.name}")
+                } else {
+                    _status.value = LlmStatus.Error("Failed to parse or load GGUF file structure.")
+                }
+            } catch (t: Throwable) {
+                Log.e(TAG, "Error loading GGUF model: ${t.message}", t)
+                _status.value = LlmStatus.Error("Failed to initialize llama.cpp GGUF: ${t.message}")
+            }
         }
     }
 
@@ -149,7 +194,12 @@ class OfflineLlmEngine(private val context: Context) {
             Log.d(TAG, "Imported model to: ${targetFile.absolutePath}")
             updateAvailableModelsList()
             _selectedModelName.value = displayName
-            initializeMediaPipe(targetFile)
+            val ext = targetFile.extension.lowercase(Locale.getDefault())
+            if (ext == "gguf") {
+                initializeLlamaCpp(targetFile)
+            } else {
+                initializeMediaPipe(targetFile)
+            }
             Result.success(targetFile)
         } catch (e: Exception) {
             Log.e(TAG, "Error importing model: ${e.message}", e)
@@ -162,6 +212,7 @@ class OfflineLlmEngine(private val context: Context) {
         try {
             llmInference?.close()
             llmInference = null
+            llamaCppEngine.unloadModel()
             modelsDir.deleteRecursively()
             modelsDir.mkdirs()
             updateAvailableModelsList()
@@ -179,6 +230,7 @@ class OfflineLlmEngine(private val context: Context) {
                 if (_selectedModelName.value == modelName) {
                     llmInference?.close()
                     llmInference = null
+                    llamaCppEngine.unloadModel()
                     _selectedModelName.value = null
                     _status.value = LlmStatus.FallbackActive("Active model deleted. Secure fallback engine active.")
                 }
@@ -260,8 +312,15 @@ class OfflineLlmEngine(private val context: Context) {
             }
         }
 
-        val currentEngine = llmInference
         val selected = _selectedModelName.value
+        val ext = selected?.substringAfterLast('.')?.lowercase(Locale.getDefault()) ?: ""
+        
+        if (ext == "gguf" && llamaCppEngine.isModelLoaded) {
+            val res = llamaCppEngine.generateResponse(prompt, systemPrompt)
+            return@withContext res
+        }
+
+        val currentEngine = llmInference
         
         if (currentEngine != null) {
             try {

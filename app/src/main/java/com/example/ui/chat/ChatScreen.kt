@@ -30,10 +30,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -64,9 +66,31 @@ fun ChatScreen(
     val messages by viewModel.messages.collectAsState()
     val currentUserInput by viewModel.currentUserInput.collectAsState()
     val isGenerating by viewModel.isGenerating.collectAsState()
+    val currentImageBase64 by viewModel.currentImageBase64.collectAsState()
     val llmStatus by viewModel.llmStatus.collectAsState()
     val isOnlineMode by viewModel.isOnlineMode.collectAsState()
     val webSearchEnabled by viewModel.webSearchEnabled.collectAsState()
+
+    val contentResolver = context.contentResolver
+    val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        uri?.let {
+            coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    val inputStream = contentResolver.openInputStream(it)
+                    val bytes = inputStream?.readBytes()
+                    inputStream?.close()
+                    if (bytes != null) {
+                        val base64Str = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
+                        viewModel.setImageBase64(base64Str)
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+        }
+    }
     val apiKey by viewModel.apiKey.collectAsState()
     val systemPrompt by viewModel.systemPrompt.collectAsState()
 
@@ -75,10 +99,13 @@ fun ChatScreen(
     val downloadProgress by viewModel.downloadProgress.collectAsState()
     val downloadingModelName by viewModel.downloadingModelName.collectAsState()
     val downloadError by viewModel.downloadError.collectAsState()
+    val devModeEnabled by viewModel.devModeEnabled.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var customModelUrl by remember { mutableStateOf("") }
     var customModelFilename by remember { mutableStateOf("") }
+    var devPassword by remember { mutableStateOf("") }
+    var showDevError by remember { mutableStateOf(false) }
     var selectedDrawerTab by remember { mutableStateOf(0) }
 
     // Launcher for file picking to load binary model file (.bin) from downloads
@@ -428,13 +455,30 @@ fun ChatScreen(
                                     .border(1.dp, Color(0xFF334155), RoundedCornerShape(10.dp))
                                     .padding(8.dp)
                             ) {
-                                Text(
-                                    text = "SELECT ACTIVE ENGRAM:",
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.ExtraBold,
-                                    color = Color(0xFF64748B),
-                                    modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
-                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "SELECT ACTIVE ENGRAM:",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = Color(0xFF64748B),
+                                        modifier = Modifier.padding(start = 4.dp)
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.refreshModels() },
+                                        modifier = Modifier.size(20.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Refresh,
+                                            contentDescription = "Refresh Models",
+                                            tint = electricBlue,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
                                 Column(
                                     verticalArrangement = Arrangement.spacedBy(4.dp),
                                     modifier = Modifier.heightIn(max = 120.dp)
@@ -499,9 +543,8 @@ fun ChatScreen(
                         )
                         
                         val presets = listOf(
-                            Triple("TinyLlama 1.1B (Q4_K_M GGUF)", "https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF/resolve/main/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf", "tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf"),
-                            Triple("Phi-2 2.7B (Q4_K_M GGUF)", "https://huggingface.co/TheBloke/phi-2-GGUF/resolve/main/phi-2.Q4_K_M.gguf", "phi-2.Q4_K_M.gguf"),
-                            Triple("Gemma 2B IT (CPU - MediaPipe Native)", "https://storage.googleapis.com/mediapipe-models/llm/gemma-2b/gemma-2b-it-cpu-int4.bin", "gemma-2b-it-cpu-int4.bin")
+                            Triple("Gemma 2B IT (CPU - MediaPipe Native)", "https://huggingface.co/iamhomy/gemma-2b-it-cpu-int4.bin/resolve/main/gemma-2b-it-cpu-int4.bin", "gemma-2b-it-cpu-int4.bin"),
+                            Triple("Gemma 2B IT (GPU - MediaPipe Native)", "https://huggingface.co/mikkir/gemma-2b-it-gpu-int4.bin/resolve/main/gemma-2b-it-gpu-int4.bin", "gemma-2b-it-gpu-int4.bin")
                         )
                         
                         presets.forEach { (name, url, filename) ->
@@ -791,12 +834,15 @@ fun ChatScreen(
                     )
                 )
             },
-            containerColor = darkSanctuaryBg
+            containerColor = darkSanctuaryBg,
+            contentWindowInsets = WindowInsets.systemBars
         ) { innerPadding ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+                    // Added imePadding to ensure no keyboard overlap
+                    .imePadding()
                     .drawBehind {
                         // Ambient blue glow behind input area
                         drawCircle(
@@ -929,7 +975,11 @@ fun ChatScreen(
                                 message = message,
                                 userBubbleBg = activeBubbleBg,
                                 modelBubbleBg = cardSurfaceBg,
-                                emerald = securityEmerald
+                                emerald = securityEmerald,
+                                onMenuAction = { actionStr ->
+                                    viewModel.onUserInputChange(actionStr)
+                                    viewModel.sendMessage()
+                                }
                             )
                         }
                         
@@ -981,77 +1031,133 @@ fun ChatScreen(
                         )
                         .padding(16.dp)
                 ) {
+                    var isInputFocused by remember { mutableStateOf(false) }
                     val controller = LocalSoftwareKeyboardController.current
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(18.dp))
+                            .clip(RoundedCornerShape(20.dp))
                             .background(cardSurfaceBg)
-                            .border(1.dp, Color(0xFF334155), RoundedCornerShape(18.dp))
-                            .padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { launchModelPickerWithPermission() },
-                            modifier = Modifier.testTag("sideload_model_prompt_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Build,
-                                contentDescription = "Sideload model from folder",
-                                tint = Color(0xFF64748B)
+                            .border(
+                                width = if (isInputFocused) 1.5.dp else 1.dp,
+                                brush = if (isInputFocused) {
+                                    Brush.linearGradient(listOf(electricBlue, Color(0xFF60A5FA)))
+                                } else {
+                                    Brush.linearGradient(listOf(Color(0xFF334155), Color(0xFF1E293B)))
+                                },
+                                shape = RoundedCornerShape(20.dp)
                             )
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        if (currentImageBase64 != null) {
+                            Box(modifier = Modifier.padding(start = 12.dp, top = 4.dp)) {
+                                val bytes = android.util.Base64.decode(currentImageBase64, android.util.Base64.DEFAULT)
+                                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                if (bmp != null) {
+                                    androidx.compose.foundation.Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = "Attachment preview",
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .clip(RoundedCornerShape(8.dp)),
+                                        contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                                    )
+                                    IconButton(
+                                        onClick = { viewModel.setImageBase64(null) },
+                                        modifier = Modifier
+                                            .size(20.dp)
+                                            .align(Alignment.TopEnd)
+                                            .background(Color.Black.copy(alpha = 0.6f), CircleShape)
+                                            .padding(2.dp)
+                                    ) {
+                                        Icon(imageVector = Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(12.dp))
+                                    }
+                                }
+                            }
                         }
 
-                        TextField(
-                            value = currentUserInput,
-                            onValueChange = { viewModel.onUserInputChange(it) },
-                            placeholder = {
-                                Text(
-                                    text = if (isOnlineMode) "Ask online + live web grounding search..." else "Ask local model isolated...",
-                                    color = Color(0xFF64748B),
-                                    fontSize = 13.sp
-                                )
-                            },
-                            colors = TextFieldDefaults.colors(
-                                focusedContainerColor = Color.Transparent,
-                                unfocusedContainerColor = Color.Transparent,
-                                disabledContainerColor = Color.Transparent,
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
-                            ),
-                            maxLines = 4,
-                            singleLine = false,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("chat_input_text_field"),
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
-                            keyboardActions = KeyboardActions(onDone = { controller?.hide() })
-                        )
-
-                        IconButton(
-                            onClick = {
-                                if (currentUserInput.trim().isNotEmpty() && !isGenerating) {
-                                    viewModel.sendMessage()
-                                }
-                            },
-                            modifier = Modifier
-                                .testTag("send_msg_btn")
-                                .background(
-                                    if (currentUserInput.trim().isEmpty() || isGenerating) Color(0xFF334155)
-                                    else electricBlue,
-                                    CircleShape
-                                )
-                                .size(36.dp),
-                            enabled = currentUserInput.trim().isNotEmpty() && !isGenerating
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = "Send",
-                                tint = Color.White,
-                                modifier = Modifier.size(16.dp)
+                            IconButton(
+                                onClick = { imagePickerLauncher.launch("image/*") },
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Add,
+                                    contentDescription = "Attach image",
+                                    tint = if (currentImageBase64 != null) electricBlue else Color(0xFF64748B),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+                            
+                            IconButton(
+                                onClick = { launchModelPickerWithPermission() },
+                                modifier = Modifier.size(36.dp).testTag("sideload_model_prompt_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Build,
+                                    contentDescription = "Sideload model from folder",
+                                    tint = Color(0xFF64748B),
+                                    modifier = Modifier.size(20.dp)
+                                )
+                            }
+
+                            TextField(
+                                value = currentUserInput,
+                                onValueChange = { viewModel.onUserInputChange(it) },
+                                placeholder = {
+                                    Text(
+                                        text = if (isOnlineMode) "Ask online + web grounding..." else "Ask local model...",
+                                        color = Color(0xFF64748B),
+                                        fontSize = 13.sp
+                                    )
+                                },
+                                colors = TextFieldDefaults.colors(
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent,
+                                    disabledContainerColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                maxLines = 4,
+                                singleLine = false,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(vertical = 0.dp)
+                                    .onFocusChanged { isInputFocused = it.isFocused }
+                                    .testTag("chat_input_text_field"),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Default),
+                                keyboardActions = KeyboardActions(onDone = { controller?.hide() })
                             )
+
+                            IconButton(
+                                onClick = {
+                                    if ((currentUserInput.trim().isNotEmpty() || currentImageBase64 != null) && !isGenerating) {
+                                        viewModel.sendMessage()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .testTag("send_msg_btn")
+                                    .background(
+                                        if ((currentUserInput.trim().isEmpty() && currentImageBase64 == null) || isGenerating) Color(0xFF334155)
+                                        else electricBlue,
+                                        CircleShape
+                                    )
+                                    .size(36.dp),
+                                enabled = (currentUserInput.trim().isNotEmpty() || currentImageBase64 != null) && !isGenerating
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.Send,
+                                    contentDescription = "Send",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1307,6 +1413,94 @@ fun ChatScreen(
                             Text("Purge Import Cache", fontSize = 12.sp)
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "ADVANCED / DEV MODE",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFFF59E0B),
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+                    
+                    if (devModeEnabled) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF451A03))
+                                .border(1.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                                .padding(12.dp)
+                        ) {
+                            Text(
+                                text = "⚠️ DEV MODE UNLOCKED",
+                                color = Color(0xFFFCD34D),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Bypass filter and access advanced parameters. Type 'menu' in chat to see debug options.",
+                                color = Color(0xFFFDE68A),
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
+                            )
+                            Button(
+                                onClick = { viewModel.disableDevMode() },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent),
+                                border = BorderStroke(1.dp, Color(0xFFF59E0B)),
+                                modifier = Modifier.fillMaxWidth().height(32.dp),
+                                shape = RoundedCornerShape(4.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("Revoke Dev Access", color = Color(0xFFFCD34D), fontSize = 11.sp)
+                            }
+                        }
+                    } else {
+                        OutlinedTextField(
+                            value = devPassword,
+                            onValueChange = { 
+                                devPassword = it
+                                showDevError = false
+                            },
+                            label = { Text("Dev Mode Password", fontSize = 11.sp) },
+                            singleLine = true,
+                            visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                            textStyle = androidx.compose.ui.text.TextStyle(
+                                color = Color.White,
+                                fontSize = 11.sp
+                            ),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFFF59E0B),
+                                unfocusedBorderColor = Color(0xFF334155),
+                                focusedLabelColor = Color(0xFFF59E0B),
+                                unfocusedLabelColor = Color(0xFF64748B)
+                            ),
+                            modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = {
+                                TextButton(
+                                    onClick = { 
+                                        if (!viewModel.attemptEnableDevMode(devPassword)) {
+                                            showDevError = true
+                                        } else {
+                                            devPassword = ""
+                                            showDevError = false
+                                        }
+                                    }
+                                ) {
+                                    Text("Unlock", color = Color(0xFFF59E0B), fontSize = 11.sp)
+                                }
+                            }
+                        )
+                        if (showDevError) {
+                            Text(
+                                text = "Invalid password",
+                                color = Color.Red,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(top = 2.dp, start = 4.dp)
+                            )
+                        }
+                    }
                 }
             },
             confirmButton = {
@@ -1360,7 +1554,8 @@ fun ChatBubble(
     message: ChatMessage,
     userBubbleBg: Color,
     modelBubbleBg: Color,
-    emerald: Color
+    emerald: Color,
+    onMenuAction: ((String) -> Unit)? = null
 ) {
     val isUser = message.role == "user"
     Box(
@@ -1416,12 +1611,52 @@ fun ChatBubble(
                     .padding(horizontal = 14.dp, vertical = 10.dp)
             ) {
                 Column {
-                    Text(
-                        text = message.content,
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        lineHeight = 17.sp
-                    )
+                    if (!isUser && message.content.startsWith("devx menu")) {
+                        Text(
+                            text = "🛠️ DEVX MENU",
+                            color = Color(0xFFFDE68A),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        val items = listOf("debug_logs", "bypass_filter", "sys_info", "exit_devx")
+                        items.forEach { action ->
+                            Button(
+                                onClick = { onMenuAction?.invoke(action) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 2.dp)
+                                    .height(32.dp),
+                                shape = RoundedCornerShape(6.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(action, color = Color.White, fontSize = 11.sp)
+                            }
+                        }
+                    } else {
+                        if (message.imageBase64 != null) {
+                            val bytes = android.util.Base64.decode(message.imageBase64, android.util.Base64.DEFAULT)
+                            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            if (bmp != null) {
+                                androidx.compose.foundation.Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = "Attached image",
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 240.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .padding(bottom = 8.dp),
+                                    contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                                )
+                            }
+                        }
+                        MarkdownTextWithImages(
+                            text = message.content,
+                            textColor = Color.White,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     
                     // Show performance diagnostic card details for model responses
                     if (!isUser && message.inferenceTimeMs > 0L) {
@@ -1478,6 +1713,64 @@ fun ChatBubble(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+fun MarkdownTextWithImages(
+    text: String,
+    textColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val regex = Regex("!\\[(.*?)\\]\\((.*?)\\)")
+    val matches = regex.findAll(text).toList()
+
+    if (matches.isEmpty()) {
+        Text(
+            text = text,
+            color = textColor,
+            fontSize = 13.sp,
+            lineHeight = 17.sp,
+            modifier = modifier
+        )
+        return
+    }
+
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        var cursor = 0
+        matches.forEach { match ->
+            val start = match.range.first
+            if (start > cursor) {
+                Text(
+                    text = text.substring(cursor, start),
+                    color = textColor,
+                    fontSize = 13.sp,
+                    lineHeight = 17.sp
+                )
+            }
+            val title = match.groupValues[1]
+            val url = match.groupValues[2]
+            
+            coil.compose.AsyncImage(
+                model = url,
+                contentDescription = title,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 300.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit
+            )
+            
+            cursor = match.range.last + 1
+        }
+        if (cursor < text.length) {
+            Text(
+                text = text.substring(cursor),
+                color = textColor,
+                fontSize = 13.sp,
+                lineHeight = 17.sp
+            )
         }
     }
 }

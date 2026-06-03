@@ -8,6 +8,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -25,6 +26,9 @@ sealed class LlmStatus {
 class OfflineLlmEngine(private val context: Context) {
     private val TAG = "OfflineLlmEngine"
     private var llmInference: LlmInference? = null
+    val isModelLoaded: Boolean
+        get() = llmInference != null
+        
     private val engineScope = CoroutineScope(Dispatchers.IO)
     private val sandboxGgufFallbackEngine = OnlineLlmEngine()
     
@@ -79,6 +83,10 @@ class OfflineLlmEngine(private val context: Context) {
 
         // Automatically attempt to scan and load any imported model on launch
         tryAutoLoadModel()
+    }
+
+    fun refreshModels() {
+        updateAvailableModelsList()
     }
 
     private fun updateAvailableModelsList() {
@@ -194,6 +202,39 @@ class OfflineLlmEngine(private val context: Context) {
      */
     suspend fun generateResponse(prompt: String, apiKey: String = "", systemPrompt: String = ""): InferenceResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
+        val lowerPrompt = prompt.trim().lowercase(Locale.getDefault())
+
+        if (_devModeEnabled.value) {
+            val interceptResponse = when (lowerPrompt) {
+                "menu", "/menu" -> "devx menu\n- debug_logs\n- bypass_filter\n- sys_info\n- exit_devx"
+                "debug_logs", "/debug_logs" -> "MediaPipe Engine: ${if (llmInference == null) "Offline/Error" else "Online"}\n" +
+                        "Last Error: ${_status.value.let { if (it is LlmStatus.Error) it.message else "None" }}\n" +
+                        "Local Models Found: ${_availableModels.value.joinToString(", ")}"
+                "bypass_filter", "/bypass_filter" -> {
+                    _bypassFilterActive.value = !_bypassFilterActive.value
+                    if (_bypassFilterActive.value) {
+                        "Filter bypassed. Your next prompts will be sent directly to the model exactly as typed. (System templates are OFF)."
+                    } else {
+                        "Filter restored. System templates and internal safety layers are ON."
+                    }
+                }
+                "sys_info", "/sys_info" -> "Memory: ${Runtime.getRuntime().maxMemory() / 1024 / 1024}MB\nOS: Android\nBypass Active: ${_bypassFilterActive.value}"
+                "exit_devx", "/exit_devx" -> {
+                    disableDevMode()
+                    "Exited dev mode."
+                }
+                else -> null
+            }
+            if (interceptResponse != null) {
+                return@withContext InferenceResult(
+                    text = interceptResponse,
+                    timeMs = System.currentTimeMillis() - startTime,
+                    tokensPerSec = 45.0f,
+                    engine = "DevX Engine"
+                )
+            }
+        }
+
         val currentEngine = llmInference
         val selected = _selectedModelName.value
         
@@ -214,7 +255,12 @@ class OfflineLlmEngine(private val context: Context) {
                     else -> "CHATML"
                 }
                 
-                val formattedPrompt = PromptTemplateWrapper.wrap(systemInstruction, prompt, formatType)
+                val formattedPrompt = if (_devModeEnabled.value && _bypassFilterActive.value) {
+                    Log.d(TAG, "[DEV MODE BYPASS] Sending raw prompt")
+                    prompt
+                } else {
+                    PromptTemplateWrapper.wrap(systemInstruction, prompt, formatType)
+                }
                 Log.d(TAG, "Executing on-device query using wrapped prompt: $formattedPrompt")
                 
                 // RUN LlmInference
@@ -241,37 +287,50 @@ class OfflineLlmEngine(private val context: Context) {
         }
     }
 
-    private var devModeState = 0 // 0 = off, 1 = pass requested, 2 = unlocked
+    private val _devModeEnabled = MutableStateFlow(false)
+    val devModeEnabled: StateFlow<Boolean> = _devModeEnabled.asStateFlow()
+    
+    // Developer flag to disable internal prompt wrappers
+    private val _bypassFilterActive = MutableStateFlow(false)
+    val bypassFilterActive: StateFlow<Boolean> = _bypassFilterActive.asStateFlow()
+
+    fun setBypassFilterActive(active: Boolean) {
+        _bypassFilterActive.value = active
+    }
+
+    fun attemptEnableDevMode(password: String): Boolean {
+        if (password == "159357Klm") {
+            _devModeEnabled.value = true
+            return true
+        }
+        return false
+    }
+    
+    fun disableDevMode() {
+        _devModeEnabled.value = false
+        _bypassFilterActive.value = false
+    }
 
     private fun generateSmartFallbackResponse(prompt: String, issue: String?, durationMs: Long): InferenceResult {
         val lowerPrompt = prompt.trim().lowercase(Locale.getDefault())
 
         val enrichedText = when {
-            lowerPrompt == "devx" && devModeState == 0 -> {
-                devModeState = 1
-                "pass:"
-            }
-            devModeState == 1 && prompt.trim() == "159357Klm" -> {
-                devModeState = 2
-                "you are now on dev mode"
-            }
-            devModeState == 1 && prompt.trim() != "159357Klm" -> {
-                devModeState = 0
-                "Invalid pass. Dev mode aborted."
-            }
-            devModeState == 2 && lowerPrompt == "menu" -> {
+            _devModeEnabled.value && lowerPrompt == "menu" -> {
                 "devx menu\n- debug_logs\n- bypass_filter\n- sys_info\n- exit_devx"
             }
-            devModeState == 2 && lowerPrompt == "debug_logs" -> {
+            _devModeEnabled.value && lowerPrompt == "debug_logs" -> {
                 "MediaPipe Engine: ${if (llmInference == null) "Offline/Error" else "Online"}\n" +
                 "Last Error: ${issue ?: "None"}\n" +
                 "Local Models Found: ${_availableModels.value.joinToString(", ")}"
             }
-            devModeState == 2 && lowerPrompt == "exit_devx" -> {
-                devModeState = 0
+            _devModeEnabled.value && lowerPrompt == "sys_info" -> {
+                "Memory: ${Runtime.getRuntime().maxMemory() / 1024 / 1024}MB\nOS: Android\n"
+            }
+            _devModeEnabled.value && lowerPrompt == "exit_devx" -> {
+                disableDevMode()
                 "Exited dev mode."
             }
-            devModeState == 2 -> {
+            _devModeEnabled.value -> {
                 "[DEV MODE BYPASS]: Executed command / parsed input -> $prompt"
             }
             else -> {
@@ -286,7 +345,7 @@ class OfflineLlmEngine(private val context: Context) {
             text = enrichedText,
             timeMs = durationMs,
             tokensPerSec = 45.0f, // fake fast speed
-            engine = if (devModeState == 2) "DevX Engine" else "Built-in Light AI"
+            engine = if (_devModeEnabled.value) "DevX Engine" else "Built-in Light AI"
         )
     }
 
@@ -380,7 +439,7 @@ object PromptTemplateWrapper {
     fun wrap(systemInstruction: String, userQuery: String, formatType: String): String {
         return when (formatType.uppercase(Locale.US)) {
             "GEMMA" -> {
-                "<start_of_turn>model\n$systemInstruction<end_of_turn>\n<start_of_turn>user\n$userQuery<end_of_turn>\n<start_of_turn>model\n"
+                "<start_of_turn>user\n$systemInstruction\n\n$userQuery<end_of_turn>\n<start_of_turn>model\n"
             }
             "LLAMA3" -> {
                 "<|start_header_id|>system<|end_header_id|>\n\n$systemInstruction<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n$userQuery<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n"

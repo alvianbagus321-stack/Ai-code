@@ -34,5 +34,7 @@ data class ChatMessage(
     // Offline AI performance metrics
     val inferenceTimeMs: Long = 0L,
     val tokensPerSecond: Float = 0f,
-    val engineType: String = "" // "MediaPipe (Gemma)", "Smart Offline Fallback", etc.
+    val engineType: String = "", // "MediaPipe (Gemma)", "Smart Offline Fallback", etc.
+    
+    val imageBase64: String? = null
 )

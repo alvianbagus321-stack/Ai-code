@@ -56,6 +56,7 @@ object ModelDownloader {
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(true)
+                setDestinationInExternalFilesDir(context, Environment.DIRECTORY_DOWNLOADS, displayName)
             }
 
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -152,9 +153,15 @@ object ModelDownloader {
                 val destination = File(modelsDir, displayName)
                 if (destination.exists()) destination.delete()
 
-                context.contentResolver.openInputStream(sourceUri)?.use { input ->
-                    FileOutputStream(destination).use { output ->
-                        input.copyTo(output)
+                val downloadedFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), displayName)
+                if (downloadedFile.exists()) {
+                    downloadedFile.copyTo(destination, overwrite = true)
+                    downloadedFile.delete()
+                } else {
+                    context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                        FileOutputStream(destination).use { output ->
+                            input.copyTo(output)
+                        }
                     }
                 }
                 

@@ -28,6 +28,16 @@ class ChatRepository(
     val downloadingModelName: StateFlow<String?> = offlineLlmEngine.downloadingModelName
     val downloadError: StateFlow<String?> = offlineLlmEngine.downloadError
 
+    val devModeEnabled: StateFlow<Boolean> = offlineLlmEngine.devModeEnabled
+    val bypassFilterActive: StateFlow<Boolean> = offlineLlmEngine.bypassFilterActive
+    
+    fun attemptEnableDevMode(password: String): Boolean = offlineLlmEngine.attemptEnableDevMode(password)
+    fun disableDevMode() = offlineLlmEngine.disableDevMode()
+
+    fun refreshModels() {
+        offlineLlmEngine.refreshModels()
+    }
+
     fun selectModel(modelName: String) {
         offlineLlmEngine.selectAndLoadModel(modelName)
     }
@@ -57,14 +67,16 @@ class ChatRepository(
         isOnlineMode: Boolean,
         webSearchEnabled: Boolean,
         apiKey: String,
-        systemPrompt: String = ""
+        systemPrompt: String = "",
+        imageBase64: String? = null
     ) {
         // 1. Save user prompt
         val userMsg = ChatMessage(
             sessionId = sessionId,
             role = "user",
             content = promptText,
-            timestamp = System.currentTimeMillis()
+            timestamp = System.currentTimeMillis(),
+            imageBase64 = imageBase64
         )
         chatDao.insertMessage(userMsg)
 
@@ -73,6 +85,54 @@ class ChatRepository(
         if (currentMessages.size <= 1) {
             val shortTitle = if (promptText.length > 28) promptText.take(25) + "..." else promptText
             chatDao.updateSessionTitle(sessionId, shortTitle)
+        }
+
+        // Global Intercept for DevX Mode Commands
+        val lowerPrompt = promptText.trim().lowercase(java.util.Locale.getDefault())
+        if (devModeEnabled.value) {
+            val interceptResponse = when (lowerPrompt) {
+                "menu", "/menu" -> "devx menu\n- debug_logs\n- bypass_filter\n- sys_info\n- exit_devx"
+                "debug_logs", "/debug_logs" -> {
+                    "MediaPipe Engine: ${if (offlineLlmEngine.isModelLoaded) "Online" else "Offline/Error"}\n" +
+                    "Last Error: ${llmStatus.value.let { if (it is LlmStatus.Error) it.message else "None" }}\n" +
+                    "Local Models Found: ${availableModels.value.joinToString(", ")}"
+                }
+                "bypass_filter", "/bypass_filter" -> {
+                    val newBypassState = !offlineLlmEngine.bypassFilterActive.value
+                    offlineLlmEngine.setBypassFilterActive(newBypassState)
+                    if (newBypassState) {
+                        "Filter bypassed. Your next prompts will be sent directly to the model exactly as typed. (System templates are OFF)."
+                    } else {
+                        "Filter restored. System templates and internal safety layers are ON."
+                    }
+                }
+                "sys_info", "/sys_info" -> {
+                    "Memory: ${Runtime.getRuntime().maxMemory() / 1024 / 1024}MB\n" +
+                    "OS: Android\n" +
+                    "Bypass Active: ${offlineLlmEngine.bypassFilterActive.value}\n" +
+                    "Active Mode: ${if (isOnlineMode) "Online (Gemini)" else "Offline (MediaPipe)"}\n" +
+                    "Web Search Grounding: $webSearchEnabled"
+                }
+                "exit_devx", "/exit_devx" -> {
+                    disableDevMode()
+                    "Exited dev mode."
+                }
+                else -> null
+            }
+
+            if (interceptResponse != null) {
+                val devMsg = ChatMessage(
+                    sessionId = sessionId,
+                    role = "model",
+                    content = interceptResponse,
+                    timestamp = System.currentTimeMillis(),
+                    inferenceTimeMs = 1L,
+                    tokensPerSecond = 45.0f,
+                    engineType = "DevX Engine"
+                )
+                chatDao.insertMessage(devMsg)
+                return
+            }
         }
 
         // 2. Perform either online or on-device offline inference
@@ -86,7 +146,9 @@ class ChatRepository(
                 history = history,
                 apiKey = apiKey,
                 searchEnabled = webSearchEnabled,
-                systemPrompt = systemPrompt
+                systemPrompt = systemPrompt,
+                imageBase64 = imageBase64,
+                bypassFilterActive = bypassFilterActive.value
             )
 
             val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)

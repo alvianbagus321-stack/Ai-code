@@ -24,6 +24,13 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     private val _currentUserInput = MutableStateFlow("")
     val currentUserInput: StateFlow<String> = _currentUserInput.asStateFlow()
 
+    private val _currentImageBase64 = MutableStateFlow<String?>(null)
+    val currentImageBase64: StateFlow<String?> = _currentImageBase64.asStateFlow()
+
+    fun setImageBase64(base64: String?) {
+        _currentImageBase64.value = base64
+    }
+
     private val _isGenerating = MutableStateFlow(false)
     val isGenerating: StateFlow<Boolean> = _isGenerating.asStateFlow()
 
@@ -72,6 +79,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val downloadProgress: StateFlow<Float?> = repository.downloadProgress
     val downloadingModelName: StateFlow<String?> = repository.downloadingModelName
     val downloadError: StateFlow<String?> = repository.downloadError
+
+    val devModeEnabled: StateFlow<Boolean> = repository.devModeEnabled
+    fun attemptEnableDevMode(password: String): Boolean = repository.attemptEnableDevMode(password)
+    fun disableDevMode() = repository.disableDevMode()
+
+    fun refreshModels() {
+        repository.refreshModels()
+    }
 
     fun selectModel(modelName: String) {
         repository.selectModel(modelName)
@@ -133,9 +148,11 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun sendMessage() {
         val prompt = _currentUserInput.value.trim()
-        if (prompt.isEmpty() || _isGenerating.value) return
+        val imgBase64 = _currentImageBase64.value
+        if ((prompt.isEmpty() && imgBase64 == null) || _isGenerating.value) return
         
         _currentUserInput.value = ""
+        _currentImageBase64.value = null
         _isGenerating.value = true
         
         viewModelScope.launch {
@@ -151,7 +168,8 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     isOnlineMode = _isOnlineMode.value,
                     webSearchEnabled = _webSearchEnabled.value,
                     apiKey = _apiKey.value,
-                    systemPrompt = _systemPrompt.value
+                    systemPrompt = _systemPrompt.value,
+                    imageBase64 = imgBase64
                 )
             } catch (e: Exception) {
                 Log.e(TAG, "Error sending message: ${e.message}", e)

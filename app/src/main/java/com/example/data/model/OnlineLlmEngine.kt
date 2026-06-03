@@ -257,13 +257,13 @@ class OnlineLlmEngine {
             generationConfig.put("temperature", 0.7)
             rootJson.put("generationConfig", generationConfig)
 
-            // Execute POST request to Gemini 3.5 Flash
+            // Execute POST request to Gemini 2.5 Flash
             val requestBodyStr = rootJson.toString()
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val body = requestBodyStr.toRequestBody(mediaType)
 
             val cleanedApiKey = apiKey.trim().removeSurrounding("\"").removeSurrounding("'")
-            val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=$cleanedApiKey"
+            val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$cleanedApiKey"
 
             val request = Request.Builder()
                 .url(endpointUrl)

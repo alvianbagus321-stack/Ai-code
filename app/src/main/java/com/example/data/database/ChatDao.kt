@@ -25,4 +25,22 @@ interface ChatDao {
 
     @Query("DELETE FROM chat_messages WHERE sessionId = :sessionId")
     suspend fun deleteMessagesBySessionId(sessionId: String)
+
+    @Query("SELECT * FROM chat_sessions")
+    suspend fun getAllSessionsList(): List<ChatSession>
+
+    @Query("SELECT * FROM chat_messages")
+    suspend fun getAllMessagesList(): List<ChatMessage>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertSessionsList(sessions: List<ChatSession>)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMessagesList(messages: List<ChatMessage>)
+
+    @Query("DELETE FROM chat_sessions")
+    suspend fun clearAllSessions()
+
+    @Query("DELETE FROM chat_messages")
+    suspend fun clearAllMessages()
 }

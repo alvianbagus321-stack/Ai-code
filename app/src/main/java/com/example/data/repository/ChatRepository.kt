@@ -209,4 +209,94 @@ class ChatRepository(
     fun getModelSize(modelName: String): Long {
         return offlineLlmEngine.getModelSize(modelName)
     }
+
+    suspend fun exportDatabaseToJson(): String {
+        val root = org.json.JSONObject()
+        root.put("version", 1)
+
+        val sessionsList = chatDao.getAllSessionsList()
+        val sessionsArray = org.json.JSONArray()
+        for (session in sessionsList) {
+            val sObj = org.json.JSONObject().apply {
+                put("id", session.id)
+                put("title", session.title)
+                put("timestamp", session.timestamp)
+                put("isReadOnly", session.isReadOnly)
+            }
+            sessionsArray.put(sObj)
+        }
+        root.put("sessions", sessionsArray)
+
+        val messagesList = chatDao.getAllMessagesList()
+        val messagesArray = org.json.JSONArray()
+        for (msg in messagesList) {
+            val mObj = org.json.JSONObject().apply {
+                put("sessionId", msg.sessionId)
+                put("role", msg.role)
+                put("content", msg.content)
+                put("timestamp", msg.timestamp)
+                put("inferenceTimeMs", msg.inferenceTimeMs)
+                put("tokensPerSecond", msg.tokensPerSecond.toDouble())
+                put("engineType", msg.engineType)
+                if (msg.imageBase64 != null) {
+                    put("imageBase64", msg.imageBase64)
+                }
+            }
+            messagesArray.put(mObj)
+        }
+        root.put("messages", messagesArray)
+
+        return root.toString(2)
+    }
+
+    suspend fun importDatabaseFromJson(jsonStr: String): Boolean {
+        try {
+            val root = org.json.JSONObject(jsonStr)
+            val sessionsArray = root.optJSONArray("sessions") ?: return false
+            val messagesArray = root.optJSONArray("messages") ?: return false
+
+            val sessionsToInsert = mutableListOf<ChatSession>()
+            for (i in 0 until sessionsArray.length()) {
+                val sObj = sessionsArray.getJSONObject(i)
+                sessionsToInsert.add(
+                    ChatSession(
+                        id = sObj.getString("id"),
+                        title = sObj.getString("title"),
+                        timestamp = sObj.optLong("timestamp", System.currentTimeMillis()),
+                        isReadOnly = sObj.optBoolean("isReadOnly", false)
+                    )
+                )
+            }
+
+            val messagesToInsert = mutableListOf<ChatMessage>()
+            for (i in 0 until messagesArray.length()) {
+                val mObj = messagesArray.getJSONObject(i)
+                messagesToInsert.add(
+                    ChatMessage(
+                        id = 0, // Auto-generate database ID
+                        sessionId = mObj.getString("sessionId"),
+                        role = mObj.getString("role"),
+                        content = mObj.getString("content"),
+                        timestamp = mObj.optLong("timestamp", System.currentTimeMillis()),
+                        inferenceTimeMs = mObj.optLong("inferenceTimeMs", 0L),
+                        tokensPerSecond = mObj.optDouble("tokensPerSecond", 0.0).toFloat(),
+                        engineType = mObj.optString("engineType", ""),
+                        imageBase64 = if (mObj.has("imageBase64")) mObj.getString("imageBase64") else null
+                    )
+                )
+            }
+
+            // Clear first to ensure full restore (overwrite of older data, as requested)
+            chatDao.clearAllMessages()
+            chatDao.clearAllSessions()
+
+            // Insert new lists
+            chatDao.insertSessionsList(sessionsToInsert)
+            chatDao.insertMessagesList(messagesToInsert)
+            return true
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
+    }
 }

@@ -122,6 +122,78 @@ fun ChatScreen(
         }
     )
 
+    // Launcher for exporting the full ZIP app backup (ACTION_CREATE_DOCUMENT)
+    val createBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("application/zip"),
+        onResult = { uri ->
+            if (uri != null) {
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openOutputStream(uri)?.use { outputStream ->
+                            viewModel.exportFullBackup(context, outputStream)
+                        }
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Full application & models exported successfully!",
+                                android.widget.Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Failed to export ZIP backup: ${e.message}",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            }
+        }
+    )
+
+    // Launcher for importing the full ZIP app backup (ACTION_OPEN_DOCUMENT)
+    val importBackupLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument(),
+        onResult = { uri ->
+            if (uri != null) {
+                coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                    try {
+                        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+                            val success = viewModel.importFullBackup(context, inputStream)
+                            coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                                if (success) {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Full application & models restored successfully!",
+                                        android.widget.Toast.LENGTH_SHORT
+                                    ).show()
+                                } else {
+                                    android.widget.Toast.makeText(
+                                        context,
+                                        "Failed to restore backup from ZIP archive.",
+                                        android.widget.Toast.LENGTH_LONG
+                                    ).show()
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                        coroutineScope.launch(kotlinx.coroutines.Dispatchers.Main) {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Failed to read ZIP backup file: ${e.message}",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    }
+                }
+            }
+        }
+    )
+
     // Permission launcher for accessing external storage on older platforms
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -652,6 +724,46 @@ fun ChatScreen(
                                             }
                                         }
                                     }
+                                    
+                                    Spacer(modifier = Modifier.height(10.dp))
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = { launchModelPickerWithPermission() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            modifier = Modifier.weight(1f).height(32.dp).testTag("drawer_sideload_btn"),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Build,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Sideload", fontSize = 10.sp, color = Color.White)
+                                        }
+
+                                        Button(
+                                            onClick = { viewModel.refreshModels() },
+                                            colors = ButtonDefaults.buttonColors(containerColor = electricBlue),
+                                            modifier = Modifier.weight(1f).height(32.dp).testTag("drawer_refresh_models_btn"),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            shape = RoundedCornerShape(6.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Refresh,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Refresh List", fontSize = 10.sp, color = Color.White)
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -699,6 +811,15 @@ fun ChatScreen(
                                         fontSize = 9.sp,
                                         color = Color(0xFF94A3B8)
                                     )
+                                    if (name.contains("GPU")) {
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = "⚠️ REQ: GPU modern yang mendukung OpenGL ES 3.1 & OpenCL, serta memori VRAM bebas sekitar ~1.26 GB (Snapdragon 8 Gen 1+ atau lebih tinggi). Jika bermasalah/error, harap unduh versi CPU.",
+                                            fontSize = 8.sp,
+                                            lineHeight = 10.sp,
+                                            color = Color(0xFFFBBF24).copy(alpha = 0.95f)
+                                        )
+                                    }
                                 }
                                 if (alreadyInstalled) {
                                     Icon(
@@ -855,6 +976,56 @@ fun ChatScreen(
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
+
+                        val currentStatus = llmStatus
+                        if (currentStatus is LlmStatus.Error) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF450a0a).copy(alpha = 0.8f)),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f))
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "Detail Error System:",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFCA5A5)
+                                    )
+                                    Text(
+                                        text = currentStatus.message,
+                                        fontSize = 10.sp,
+                                        color = Color(0xFFFEE2E2),
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(vertical = 4.dp)
+                                    )
+                                    Divider(color = Color(0xFFEF4444).copy(alpha = 0.3f), modifier = Modifier.padding(vertical = 6.dp))
+                                    
+                                    val isGpuModel = selectedModelName?.lowercase()?.contains("gpu") == true
+                                    if (isGpuModel) {
+                                        Text(
+                                            text = "💡 DIAGNOSIS MASALAH (GPU):\n" +
+                                                   "Model GPU gemma-2b-it-gpu-int4 memerlukan chipset grafis modern yang mendukung OpenGL ES 3.1 & OpenCL, serta memori VRAM GPU bebas sekitar ~1.26 GB.\n\n" +
+                                                   "Bila HP Android tidak didukung, MediaPipe gagal memuat model GPU. Ini adalah limitasi perangkat HP, bukan kesalahan aplikasi.\n\n" +
+                                                   "👉 Solusi:\n" +
+                                                   "Silakan unduh model 'Gemma 2B IT (CPU - MediaPipe Native)' di atas. Versi CPU dijamin aman dan berjalan lancar di HP mana pun.",
+                                            fontSize = 9.sp,
+                                            lineHeight = 13.sp,
+                                            color = Color(0xFFFFEDD5)
+                                        )
+                                    } else {
+                                        Text(
+                                            text = "💡 DIAGNOSIS MASALAH (CPU/Custom):\n" +
+                                                   "Pastikan file model didownload sempurna tanpa terputus. Jika error berlanjut, mohon hapus file model dengan tombol tong sampah di atas dan unduh ulang, atau menggunakan Sideload.",
+                                            fontSize = 9.sp,
+                                            lineHeight = 13.sp,
+                                            color = Color(0xFFFFEDD5)
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -939,58 +1110,6 @@ fun ChatScreen(
                                 imageVector = if (isOnlineMode) Icons.Default.Refresh else Icons.Default.Lock,
                                 contentDescription = "Toggle Online/Offline Mode",
                                 tint = if (isOnlineMode) Color(0xFF60A5FA) else Color(0xFF94A3B8)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                try {
-                                    val exportText = viewModel.getExportText()
-                                    val file = java.io.File(context.cacheDir, "chat_debug_export.txt")
-                                    file.writeText(exportText)
-                                    
-                                    val uri = androidx.core.content.FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.fileprovider",
-                                        file
-                                    )
-                                    
-                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Chat Debug Export")
-                                        putExtra(android.content.Intent.EXTRA_TEXT, "Offline AI Chat History & System Debug Logs:")
-                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(android.content.Intent.createChooser(intent, "Export Chat & Debug Logs"))
-                                    viewModel.logEvent("Exported chat and debug logs successfully.")
-                                } catch (e: Exception) {
-                                    viewModel.logEvent("Failed to export chat logs: ${e.message}")
-                                }
-                            },
-                            modifier = Modifier.testTag("export_logs_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.List,
-                                contentDescription = "Export Chat and Debug Logs",
-                                tint = Color(0xFF94A3B8)
-                            )
-                        }
-
-                        IconButton(
-                            onClick = {
-                                if (isOnlineMode) {
-                                    showShareDialog = true
-                                } else {
-                                    showShareOfflineAlert = true
-                                }
-                            },
-                            modifier = Modifier.testTag("share_chat_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Share,
-                                contentDescription = "Share Chat Session",
-                                tint = if (isOnlineMode) Color(0xFF60A5FA) else Color(0xFF475569)
                             )
                         }
 
@@ -1619,6 +1738,128 @@ fun ChatScreen(
                             Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Purge Import Cache", fontSize = 12.sp)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    
+                    Text(
+                        text = "APP STORAGE BACKUP & RESTORE (ZIP)",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFF60A5FA),
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+
+                    Text(
+                        text = "Save/load SQLite DB AND all downloaded AI model binaries into a single portable backup ZIP. Save it to any local directory of your choice.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                createBackupLauncher.launch("ai_full_app_backup.zip")
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                            modifier = Modifier.weight(1f).testTag("backup_export_btn"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Export Backup ZIP", fontSize = 11.sp, color = Color.White)
+                        }
+
+                        Button(
+                            onClick = {
+                                importBackupLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                            modifier = Modifier.weight(1f).testTag("backup_import_btn"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Import Backup ZIP", fontSize = 11.sp, color = Color.White)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+                    
+                    Text(
+                        text = "CHAT SHARING & SYSTEM LOGS",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFFA7F3D0),
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+
+                    Text(
+                        text = "Generate shareable transcripts of your active AI session, or export raw developer-level engine logs.",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(bottom = 8.dp)
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                if (isOnlineMode) {
+                                    showShareDialog = true
+                                } else {
+                                    showShareOfflineAlert = true
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                            modifier = Modifier.weight(1f).testTag("settings_share_btn"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.Share, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Share Session", fontSize = 11.sp, color = Color.White)
+                        }
+
+                        Button(
+                            onClick = {
+                                try {
+                                    val exportText = viewModel.getExportText()
+                                    val file = java.io.File(context.cacheDir, "chat_debug_export.txt")
+                                    file.writeText(exportText)
+                                    
+                                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        file
+                                    )
+                                    
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                        type = "text/plain"
+                                        putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                        putExtra(android.content.Intent.EXTRA_SUBJECT, "Chat Debug Export")
+                                        putExtra(android.content.Intent.EXTRA_TEXT, "Offline AI Chat History & System Debug Logs:")
+                                        addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(android.content.Intent.createChooser(intent, "Export Chat & Debug Logs"))
+                                    viewModel.logEvent("Exported chat and debug logs successfully.")
+                                } catch (e: Exception) {
+                                    viewModel.logEvent("Failed to export chat logs: ${e.message}")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                            modifier = Modifier.weight(1f).testTag("settings_export_logs_btn"),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Icon(Icons.Default.List, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Export Logs", fontSize = 11.sp, color = Color.White)
                         }
                     }
 

@@ -32,6 +32,7 @@ object ModelDownloader {
     
     private var downloadId: Long = -1L
     private var receiverRegistered = false
+    private var maxProgressAchieved = 0f
 
     private val onDownloadComplete = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -46,6 +47,7 @@ object ModelDownloader {
         if (_downloadingModelName.value != null) return
 
         _downloadingModelName.value = displayName
+        maxProgressAchieved = 0f
         _downloadProgress.value = 0f
         _downloadError.value = null
 
@@ -91,7 +93,11 @@ object ModelDownloader {
                                 val bytesTotal = cursor.getLong(bytesTotalIndex)
                                 
                                 if (bytesTotal > 0) {
-                                    _downloadProgress.value = bytesDownloaded.toFloat() / bytesTotal.toFloat()
+                                    val progressVal = bytesDownloaded.toFloat() / bytesTotal.toFloat()
+                                    if (progressVal > maxProgressAchieved) {
+                                        maxProgressAchieved = progressVal
+                                        _downloadProgress.value = progressVal
+                                    }
                                 }
                             }
 

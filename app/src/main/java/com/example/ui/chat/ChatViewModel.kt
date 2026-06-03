@@ -244,6 +244,130 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         }
     }
 
+    suspend fun exportAppDatabase(): String {
+        return repository.exportDatabaseToJson()
+    }
+
+    suspend fun importAppDatabase(jsonStr: String): Boolean {
+        val success = repository.importDatabaseFromJson(jsonStr)
+        if (success) {
+            logEvent("Successfully imported and restored all application data.")
+            val firstSession = repository.allSessions.firstOrNull()?.firstOrNull()
+            _activeSessionId.value = firstSession?.id
+        } else {
+            logEvent("Failed to import or parse backup file.")
+        }
+        return success
+    }
+
+    suspend fun exportFullBackup(context: android.content.Context, outputStream: java.io.OutputStream) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            var zipOut: java.util.zip.ZipOutputStream? = null
+            try {
+                zipOut = java.util.zip.ZipOutputStream(outputStream)
+                
+                // 1. Export database as JSON and add to ZIP
+                val dbJson = repository.exportDatabaseToJson()
+                val dbEntry = java.util.zip.ZipEntry("database_backup.json")
+                zipOut.putNextEntry(dbEntry)
+                zipOut.write(dbJson.toByteArray(Charsets.UTF_8))
+                zipOut.closeEntry()
+                logEvent("Zipped database backup JSON successfully.")
+                
+                // 2. Add downloaded models from context.filesDir/local_llm_models
+                val modelsDir = java.io.File(context.filesDir, "local_llm_models")
+                if (modelsDir.exists() && modelsDir.isDirectory) {
+                    val modelFiles = modelsDir.listFiles()
+                    if (modelFiles != null) {
+                        for (file in modelFiles) {
+                            if (file.isFile) {
+                                val fileEntry = java.util.zip.ZipEntry("models/${file.name}")
+                                zipOut.putNextEntry(fileEntry)
+                                file.inputStream().use { input ->
+                                    input.copyTo(zipOut)
+                                }
+                                zipOut.closeEntry()
+                                logEvent("Packed offline model into ZIP: ${file.name}")
+                            }
+                        }
+                    }
+                }
+                
+                zipOut.finish()
+                logEvent("Full app backup ZIP generated successfully.")
+            } catch (e: Exception) {
+                e.printStackTrace()
+                logEvent("Failed to write app backup ZIP: ${e.message}")
+                throw e
+            } finally {
+                try {
+                    zipOut?.close()
+                } catch (e: Exception) {}
+            }
+        }
+    }
+
+    suspend fun importFullBackup(context: android.content.Context, inputStream: java.io.InputStream): Boolean {
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            var dbRestored = false
+            var zipIn: java.util.zip.ZipInputStream? = null
+            try {
+                zipIn = java.util.zip.ZipInputStream(inputStream)
+                var entry = zipIn.nextEntry
+                val modelsDir = java.io.File(context.filesDir, "local_llm_models").apply {
+                    if (!exists()) mkdirs()
+                }
+                
+                while (entry != null) {
+                    if (entry.name == "database_backup.json") {
+                        val jsonBytes = zipIn.readBytes()
+                        val jsonStr = String(jsonBytes, Charsets.UTF_8)
+                        val dbSuccess = repository.importDatabaseFromJson(jsonStr)
+                        if (dbSuccess) {
+                            dbRestored = true
+                            logEvent("Restored internal chat database from backup ZIP.")
+                        }
+                    } else if (entry.name.startsWith("models/")) {
+                        val fileName = entry.name.substringAfter("models/")
+                        if (fileName.isNotEmpty() && !entry.isDirectory) {
+                            val destFile = java.io.File(modelsDir, fileName)
+                            if (destFile.exists()) {
+                                destFile.delete()
+                            }
+                            destFile.outputStream().use { output ->
+                                zipIn.copyTo(output)
+                            }
+                            logEvent("Unpacked offline model from backup ZIP: $fileName")
+                        }
+                    }
+                    zipIn.closeEntry()
+                    entry = zipIn.nextEntry
+                }
+                
+                if (dbRestored) {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        val firstSession = repository.allSessions.firstOrNull()?.firstOrNull()
+                        _activeSessionId.value = firstSession?.id
+                        repository.refreshModels()
+                    }
+                    logEvent("Successfully imported and restored all application data and offline models from ZIP.")
+                    true
+                } else {
+                    logEvent("Failed to restore ZIP backup: database file not found inside ZIP archive.")
+                    false
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                logEvent("Failed to import full backup ZIP: ${e.message}")
+                false
+            } finally {
+                try {
+                    zipIn?.close()
+                } catch (e: Exception) {}
+            }
+        }
+    }
+
     fun getExportText(): String {
         val sb = java.lang.StringBuilder()
         sb.append("=========================================\n")

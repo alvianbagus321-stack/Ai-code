@@ -1042,7 +1042,7 @@ fun ChatScreen(
 
                                 val ggufPresets = listOf(
                                     Triple("SmolLM2 360M IT Q8_0 GGUF (Light/Compact - 384MB)", "https://huggingface.co/ngxson/SmolLM2-360M-Instruct-Q8_0-GGUF/resolve/main/smollm2-360m-instruct-q8_0.gguf", "smollm2-360m-instruct-q8_0.gguf"),
-                                    Triple("SmolLM2 135M IT Q8_0 GGUF (Ultra-Light - 152MB)", "https://huggingface.co/ngxson/SmolLM2-135M-Instruct-Q8_0-GGUF/resolve/main/smollm2-135m-instruct-q8_0.gguf", "smollm2-135m-instruct-q8_0.gguf")
+                                    Triple("SmolLM2 135M IT Q8_0 GGUF (Ultra-Light - 146MB)", "https://huggingface.co/lmstudio-community/SmolLM2-135M-Instruct-GGUF/resolve/main/SmolLM2-135M-Instruct-Q8_0.gguf", "SmolLM2-135M-Instruct-Q8_0.gguf")
                                 )
 
                                 ggufPresets.forEach { (name, url, filename) ->

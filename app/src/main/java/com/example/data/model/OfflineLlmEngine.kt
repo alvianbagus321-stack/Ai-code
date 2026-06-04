@@ -316,7 +316,7 @@ class OfflineLlmEngine(private val context: Context) {
         val ext = selected?.substringAfterLast('.')?.lowercase(Locale.getDefault()) ?: ""
         
         if (ext == "gguf" && llamaCppEngine.isModelLoaded) {
-            val res = llamaCppEngine.generateResponse(prompt, systemPrompt)
+            val res = llamaCppEngine.generateResponse(prompt, systemPrompt, _bypassFilterActive.value)
             return@withContext res
         }
 
@@ -350,15 +350,25 @@ class OfflineLlmEngine(private val context: Context) {
                 // RUN LlmInference
                 val output = currentEngine.generateResponse(formattedPrompt)
                 val duration = System.currentTimeMillis() - startTime
-                val wordCount = output.split("\\s+".toRegex()).size
+                
+                // Let's check for repetitive gibberish/tokenizer loop
+                val isGibberish = detectGibberish(output)
+                val finalOutput = if (isGibberish) {
+                    val fallbackResult = llamaCppEngine.generateResponse(prompt, systemPrompt, _bypassFilterActive.value)
+                    "⚠️ [MediaPipe Tokenizer Mismatch Detected - Seamless Sandbox Recovery]\n\n" + fallbackResult.text
+                } else {
+                    output
+                }
+
+                val wordCount = finalOutput.split("\\s+".toRegex()).size
                 val estimatedTokens = (wordCount * 1.3).toFloat()
                 val tokensPerSecond = if (duration > 0) (estimatedTokens / (duration / 1000f)) else 0f
                 
                 InferenceResult(
-                    text = output,
+                    text = finalOutput,
                     timeMs = duration,
                     tokensPerSec = tokensPerSecond,
-                    engine = "MediaPipe (${_status.value.let { if (it is LlmStatus.Ready) it.modelName else "Local bin" }})"
+                    engine = if (isGibberish) "Sandbox Auto-Fallback (Recovery Engine)" else "MediaPipe (${_status.value.let { if (it is LlmStatus.Ready) it.modelName else "Local bin" }})"
                 )
             } catch (t: Throwable) {
                 Log.e(TAG, "Error during physical inference: ${t.message}", t)
@@ -369,6 +379,34 @@ class OfflineLlmEngine(private val context: Context) {
             val fallbackTime = System.currentTimeMillis() - startTime
             generateSmartFallbackResponse(prompt, "No model physically loaded into memory.", fallbackTime)
         }
+    }
+
+    private fun detectGibberish(text: String): Boolean {
+        if (text.isBlank()) return false
+        
+        // 1. Check for specific common corruption keywords like "<unused" or "<pad>" repeated 2+ times
+        val unusedCount = text.split("<unused").size - 1
+        val padCount = text.split("<pad>").size - 1
+        if (unusedCount >= 2 || padCount >= 2) return true
+        
+        // 2. Check for extreme repetition of any single word (e.g. "increa" or "encomp")
+        val words = text.lowercase(Locale.getDefault()).split(Regex("\\s+")).filter { it.length > 3 }
+        if (words.size >= 8) {
+            // Check sliding window of word counts
+            val freqMap = mutableMapOf<String, Int>()
+            for (w in words) {
+                val cleaned = w.replace(Regex("[^a-z0-9]"), "")
+                if (cleaned.length > 3) {
+                    freqMap[cleaned] = (freqMap[cleaned] ?: 0) + 1
+                }
+            }
+            // If any word of length > 3 accounts for more than 35% of the entire output and repeated at least 4 times, it is gibberish
+            val maxFreq = freqMap.values.maxOrNull() ?: 0
+            if (maxFreq >= 4 && maxFreq.toFloat() / words.size > 0.35f) {
+                return true
+            }
+        }
+        return false
     }
 
     private val _devModeEnabled = MutableStateFlow(false)

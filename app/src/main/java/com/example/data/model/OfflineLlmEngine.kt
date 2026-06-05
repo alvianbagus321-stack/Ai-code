@@ -456,9 +456,6 @@ class OfflineLlmEngine(private val context: Context) {
                 disableDevMode()
                 "Exited dev mode."
             }
-            _devModeEnabled.value -> {
-                "[DEV MODE BYPASS]: Executed command / parsed input -> $prompt"
-            }
             else -> {
                 val isImageRequest = lowerPrompt.contains("gambar") || lowerPrompt.contains("draw") || lowerPrompt.contains("paint") || lowerPrompt.contains("generate image") || lowerPrompt.contains("lukis")
                 if (isImageRequest) {

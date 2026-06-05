@@ -96,6 +96,10 @@ class ChatRepository(
     val devModeEnabled: StateFlow<Boolean> = offlineLlmEngine.devModeEnabled
     val bypassFilterActive: StateFlow<Boolean> = offlineLlmEngine.bypassFilterActive
     
+    fun setBypassFilterActive(active: Boolean) {
+        offlineLlmEngine.setBypassFilterActive(active)
+    }
+    
     fun attemptEnableDevMode(password: String): Boolean = offlineLlmEngine.attemptEnableDevMode(password)
     fun disableDevMode() = offlineLlmEngine.disableDevMode()
 

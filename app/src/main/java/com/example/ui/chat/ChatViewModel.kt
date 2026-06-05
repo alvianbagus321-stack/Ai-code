@@ -106,6 +106,8 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val ggufDownloadError: StateFlow<String?> = repository.ggufDownloadError
 
     val devModeEnabled: StateFlow<Boolean> = repository.devModeEnabled
+    val bypassFilterActive: StateFlow<Boolean> = repository.bypassFilterActive
+
     
     val themeColor: StateFlow<String?> = repository.themeColor
     val backgroundImageUri: StateFlow<String?> = repository.backgroundImageUri
@@ -146,6 +148,8 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun attemptEnableDevMode(password: String): Boolean = repository.attemptEnableDevMode(password)
     fun disableDevMode() = repository.disableDevMode()
+    fun setBypassFilterActive(active: Boolean) = repository.setBypassFilterActive(active)
+
 
     fun refreshModels() {
         repository.refreshModels()

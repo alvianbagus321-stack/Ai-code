@@ -76,6 +76,10 @@ class OfflineLlmEngine(private val context: Context) {
     }
 
     init {
+        // Restore any active download states across startup/restarts
+        ModelDownloader.restoreDownloadState(context)
+        GgufModelDownloader.restoreDownloadState(context)
+
         // Broadcast Receiver to auto-load completed downloads
         val receiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(context: android.content.Context, intent: android.content.Intent) {

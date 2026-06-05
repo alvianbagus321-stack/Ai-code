@@ -42,6 +42,34 @@ object GgufModelDownloader {
         }
     }
 
+    fun restoreDownloadState(context: Context) {
+        val prefs = context.getSharedPreferences("gguf_model_download_prefs", Context.MODE_PRIVATE)
+        val savedId = prefs.getLong("download_id", -1L)
+        val savedName = prefs.getString("downloading_model_name", null)
+
+        if (savedId != -1L && savedName != null) {
+            downloadId = savedId
+            _downloadingModelName.value = savedName
+            _downloadProgress.value = prefs.getFloat("download_progress", 0f)
+            maxProgressAchieved = _downloadProgress.value ?: 0f
+
+            if (!receiverRegistered) {
+                try {
+                    context.applicationContext.registerReceiver(
+                        onDownloadComplete,
+                        IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
+                        Context.RECEIVER_EXPORTED
+                    )
+                    receiverRegistered = true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Failed to register receiver during restore", e)
+                }
+            }
+
+            checkDownloadStatus(context)
+        }
+    }
+
     fun startDownload(context: Context, modelUrl: String, displayName: String) {
         if (_downloadingModelName.value != null) return
 
@@ -66,6 +94,12 @@ object GgufModelDownloader {
             val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             downloadId = downloadManager.enqueue(request)
 
+            context.getSharedPreferences("gguf_model_download_prefs", Context.MODE_PRIVATE).edit()
+                .putLong("download_id", downloadId)
+                .putString("downloading_model_name", finalName)
+                .putFloat("download_progress", 0f)
+                .apply()
+
             if (!receiverRegistered) {
                 context.applicationContext.registerReceiver(
                     onDownloadComplete,
@@ -75,46 +109,58 @@ object GgufModelDownloader {
                 receiverRegistered = true
             }
 
-            // Poll progress
-            downloadJob = downloadScope.launch {
-                var querying = true
-                while (querying) {
-                    delay(1000)
-                    val query = DownloadManager.Query().setFilterById(downloadId)
-                    val cursor = downloadManager.query(query)
-                    if (cursor != null && cursor.moveToFirst()) {
-                        val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
-                        if (statusIndex >= 0) {
-                            val status = cursor.getInt(statusIndex)
-                            
-                            val bytesDownloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-                            val bytesTotalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-                            
-                            if (bytesDownloadedIndex >= 0 && bytesTotalIndex >= 0) {
-                                val bytesDownloaded = cursor.getLong(bytesDownloadedIndex)
-                                val bytesTotal = cursor.getLong(bytesTotalIndex)
-                                
-                                if (bytesTotal > 0) {
-                                    val progressVal = bytesDownloaded.toFloat() / bytesTotal.toFloat()
-                                    if (progressVal > maxProgressAchieved) {
-                                        maxProgressAchieved = progressVal
-                                        _downloadProgress.value = progressVal
-                                    }
-                                }
-                            }
-
-                            if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
-                                querying = false
-                            }
-                        }
-                    }
-                    cursor?.close()
-                }
-            }
+            startPollingProgress(context)
         } catch (e: Exception) {
             Log.e(TAG, "Error starting GGUF download", e)
             _downloadError.value = e.message ?: "Failed to start GGUF download"
-            resetState()
+            resetState(context)
+        }
+    }
+
+    private fun startPollingProgress(context: Context) {
+        downloadJob?.cancel()
+        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        downloadJob = downloadScope.launch {
+            var querying = true
+            while (querying) {
+                delay(1000)
+                val query = DownloadManager.Query().setFilterById(downloadId)
+                val cursor = downloadManager.query(query)
+                if (cursor != null && cursor.moveToFirst()) {
+                    val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                    if (statusIndex >= 0) {
+                        val status = cursor.getInt(statusIndex)
+                        
+                        val bytesDownloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                        val bytesTotalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                        
+                        if (bytesDownloadedIndex >= 0 && bytesTotalIndex >= 0) {
+                            val bytesDownloaded = cursor.getLong(bytesDownloadedIndex)
+                            val bytesTotal = cursor.getLong(bytesTotalIndex)
+                            
+                            if (bytesTotal > 0) {
+                                val progressVal = bytesDownloaded.toFloat() / bytesTotal.toFloat()
+                                if (progressVal > maxProgressAchieved) {
+                                    maxProgressAchieved = progressVal
+                                    _downloadProgress.value = progressVal
+
+                                    context.getSharedPreferences("gguf_model_download_prefs", Context.MODE_PRIVATE).edit()
+                                        .putFloat("download_progress", progressVal)
+                                        .apply()
+                                }
+                            }
+                        }
+
+                        if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
+                            querying = false
+                            checkDownloadStatus(context)
+                        }
+                    }
+                } else {
+                    querying = false
+                }
+                cursor?.close()
+            }
         }
     }
 
@@ -124,11 +170,13 @@ object GgufModelDownloader {
         val query = DownloadManager.Query().setFilterById(downloadId)
         val cursor = downloadManager.query(query)
         
+        var isFinished = false
         if (cursor != null && cursor.moveToFirst()) {
             val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
             if (statusIndex >= 0) {
                 val status = cursor.getInt(statusIndex)
                 if (status == DownloadManager.STATUS_SUCCESSFUL) {
+                    isFinished = true
                     val uriIndex = cursor.getColumnIndex(DownloadManager.COLUMN_LOCAL_URI)
                     if (uriIndex >= 0) {
                         val fileUriString = cursor.getString(uriIndex)
@@ -137,16 +185,21 @@ object GgufModelDownloader {
                         }
                     }
                 } else if (status == DownloadManager.STATUS_FAILED) {
+                    isFinished = true
                     val reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
                     val reason = if (reasonIndex >= 0) cursor.getInt(reasonIndex).toString() else "Unknown GGUF Error"
                     _downloadError.value = "GGUF Download failed (Reason: $reason)."
-                    resetState()
+                    resetState(context)
+                } else {
+                    startPollingProgress(context)
                 }
             }
+        } else {
+            resetState(context)
         }
         cursor?.close()
         
-        if (receiverRegistered) {
+        if (isFinished && receiverRegistered) {
             try {
                 context.applicationContext.unregisterReceiver(onDownloadComplete)
                 receiverRegistered = false
@@ -183,11 +236,11 @@ object GgufModelDownloader {
                 intent.putExtra("MODEL_NAME", displayName)
                 context.sendBroadcast(intent)
                 
-                resetState()
+                resetState(context)
             } catch (e: Exception) {
                 Log.e(TAG, "GGUF File copy error", e)
                 _downloadError.value = "Failed to process downloaded GGUF file: ${e.message}"
-                resetState()
+                resetState(context)
             }
         }
     }
@@ -198,12 +251,16 @@ object GgufModelDownloader {
             downloadManager.remove(downloadId)
         }
         downloadJob?.cancel()
-        resetState()
+        resetState(context)
     }
     
-    private fun resetState() {
+    private fun resetState(context: Context? = null) {
         _downloadingModelName.value = null
         _downloadProgress.value = null
         downloadId = -1L
+        context?.let {
+            val prefs = it.getSharedPreferences("gguf_model_download_prefs", Context.MODE_PRIVATE)
+            prefs.edit().clear().apply()
+        }
     }
 }

@@ -191,6 +191,8 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val multiAgentBgOpacity: StateFlow<Float> = repository.multiAgentBgOpacity
     val inputBarOpacity: StateFlow<Float> = repository.inputBarOpacity
     val userName: StateFlow<String> = repository.userName
+    val storageType: StateFlow<String> = repository.storageType
+    val localDirectoryUri: StateFlow<String?> = repository.localDirectoryUri
     val agentNamesFlow: StateFlow<List<String>> = kotlinx.coroutines.flow.combine(repository.agentNames) { it.toList() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.agentNames.map { it.value })
 
 
@@ -200,6 +202,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun setUserName(name: String) {
         repository.setUserName(name)
+    }
+
+    fun setStorageType(type: String) {
+        repository.setStorageType(type)
+    }
+
+    fun setLocalDirectoryUri(uri: String?) {
+        repository.setLocalDirectoryUri(uri)
     }
 
     fun setBackgroundImageUri(uri: String?) {

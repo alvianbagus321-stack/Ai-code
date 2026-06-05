@@ -1,6 +1,7 @@
 package com.example.data.repository
 
 import android.net.Uri
+import androidx.documentfile.provider.DocumentFile
 import com.example.data.database.ChatDao
 import com.example.data.database.ChatMessage
 import com.example.data.database.ChatSession
@@ -50,6 +51,12 @@ class ChatRepository(
 
     private val _inputBarOpacity = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getFloat("input_bar_opacity", 0.9f))
     val inputBarOpacity: StateFlow<Float> = _inputBarOpacity.asStateFlow()
+
+    private val _storageType = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("storage_type", "drive") ?: "drive")
+    val storageType: StateFlow<String> = _storageType.asStateFlow()
+
+    private val _localDirectoryUri = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("local_directory_uri", null))
+    val localDirectoryUri: StateFlow<String?> = _localDirectoryUri.asStateFlow()
 
     private val _userName = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("user_name", "User") ?: "User")
     val userName: StateFlow<String> = _userName.asStateFlow()
@@ -125,6 +132,39 @@ class ChatRepository(
         _userName.value = name
     }
 
+    fun setStorageType(type: String) {
+        sharedPrefs.edit().putString("storage_type", type).apply()
+        _storageType.value = type
+    }
+    
+    fun setLocalDirectoryUri(uri: String?) {
+        sharedPrefs.edit().putString("local_directory_uri", uri).apply()
+        _localDirectoryUri.value = uri
+    }
+
+    private fun saveFileLocal(filename: String, content: String): Boolean {
+        return try {
+            val directoryUri = Uri.parse(_localDirectoryUri.value ?: return false)
+            val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+            val file = docFile?.findFile(filename) ?: docFile?.createFile("text/plain", filename)
+            file?.uri?.let { uri ->
+                context.contentResolver.openOutputStream(uri)?.bufferedWriter().use { it?.write(content) }
+                true
+            } ?: false
+        } catch (e: Exception) { e.printStackTrace(); false }
+    }
+
+    private fun readFileLocal(filename: String): String? {
+        return try {
+            val directoryUri = Uri.parse(_localDirectoryUri.value ?: return null)
+            val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+            val file = docFile?.findFile(filename)
+            file?.uri?.let { uri ->
+                context.contentResolver.openInputStream(uri)?.bufferedReader().use { it?.readText() }
+            }
+        } catch (e: Exception) { e.printStackTrace(); null }
+    }
+
     private val onlineLlmEngine = OnlineLlmEngine()
 
     // Google Drive Integration
@@ -138,7 +178,10 @@ class ChatRepository(
     }
 
     suspend fun processGoogleDriveDocumentOpps(sessionId: String, originalText: String, role: String): String {
-        if (!googleDriveHelper.isLinked()) {
+        val isDrive = _storageType.value == "drive"
+        
+        // Check link status only if drive is selected
+        if (isDrive && !googleDriveHelper.isLinked()) {
             return originalText
         }
 
@@ -156,16 +199,17 @@ class ChatRepository(
             val filename = match.groupValues[1]
             val content = match.groupValues[2]
 
-            val success = googleDriveHelper.syncFileToDrive(filename, content)
+            val success = if (isDrive) {
+                googleDriveHelper.syncFileToDrive(filename, content)
+            } else {
+                saveFileLocal(filename, content)
+            }
             modified = true
             
-            val driveMsg = if (success) {
-                "Tersinkronisasi dengan Google Drive"
-            } else {
-                "Hanya Lokal (Gagal sinkron Google Drive)"
-            }
+            val storageDisplay = if (isDrive) "Google Drive" else "Lokal"
+            val storageMsg = if (success) "Tersinkronisasi dengan $storageDisplay" else "Gagal sinkron/simpan ($storageDisplay)"
             
-            val replacement = "```file:$filename:$driveMsg\n$content\n```"
+            val replacement = "```file:$filename:$storageMsg\n$content\n```"
             replacedText = replacedText.replace(fullMatch, replacement)
         }
 
@@ -176,20 +220,23 @@ class ChatRepository(
         for (match in readMatches) {
             val fullMatch = match.value
             val filename = match.groupValues[1]
-            val content = googleDriveHelper.fetchFileFromDrive(filename)
+            val content = if (isDrive) googleDriveHelper.fetchFileFromDrive(filename) else readFileLocal(filename)
             modified = true
+            
+            val storageDisplay = if (isDrive) "Google Drive" else "Lokal"
+            
             if (content != null) {
                 val feedMsg = ChatMessage(
                     sessionId = sessionId,
                     role = "user",
-                    content = "[Konten File '$filename' dari Google Drive]:\n\n$content",
+                    content = "[Konten File '$filename' dari $storageDisplay]:\n\n$content",
                     timestamp = System.currentTimeMillis() + 10L,
-                    engineType = "Google Drive Sync"
+                    engineType = "$storageDisplay Sync"
                 )
                 chatDao.insertMessage(feedMsg)
-                replacedText = replacedText.replace(fullMatch, "*(📁 Google Drive: Berhasil memuat file '$filename' untuk dianalisis oleh AI!)*")
+                replacedText = replacedText.replace(fullMatch, "*(📁 $storageDisplay: Berhasil memuat file '$filename' untuk dianalisis oleh AI!)*")
             } else {
-                replacedText = replacedText.replace(fullMatch, "*(📁 Google Drive: File '$filename' tidak ditemui atau gagal diunduh!)*")
+                replacedText = replacedText.replace(fullMatch, "*(📁 $storageDisplay: File '$filename' tidak ditemui atau gagal diunduh!)*")
             }
         }
 
@@ -317,6 +364,13 @@ class ChatRepository(
         sharedPrefs.getStringSet("multi_agent_session_ids", emptySet()) ?: emptySet()
     )
     val multiAgentSessionIds: StateFlow<Set<String>> = _multiAgentSessionIds.asStateFlow()
+
+    private val _isAutonomousMode = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isAutonomousMode: StateFlow<Boolean> = _isAutonomousMode.asStateFlow()
+
+    fun setAutonomousMode(enabled: Boolean) {
+        _isAutonomousMode.value = enabled
+    }
 
     fun markSessionAsMultiAgent(sessionId: String) {
         val updated = _multiAgentSessionIds.value.toMutableSet().apply { add(sessionId) }
@@ -598,6 +652,8 @@ class ChatRepository(
             
             val isTagged = promptText.contains("@")
 
+            var conversationContext = promptText
+            
             for ((agentName, agentPrompt, agentModel) in agentsList) {
                 // If private message, skip if not target
                 if (privateTarget != null && !agentName.equals(privateTarget, ignoreCase = true)) {
@@ -614,7 +670,8 @@ class ChatRepository(
                 // Read the message history up to this point
                 val history = chatDao.getMessagesForSession(sessionId).firstOrNull() ?: emptyList()
                 
-                val currentPrompt = if (privateContent != null) privateContent else promptText
+                // Use accumulated conversation context
+                val currentPrompt = if (privateContent != null) privateContent else conversationContext
 
                 // Construct System Instruction for this specific agent
                 val otherAgentsInfo = agentsList.filter { it.first != agentName }
@@ -707,6 +764,9 @@ class ChatRepository(
 
                 // Process document operations (if any) generated by the agent
                 val processedAgentContent = processGoogleDriveDocumentOpps(sessionId, responseText, "model")
+                
+                // Update context for next agent
+                conversationContext += "\n\n$agentName: $processedAgentContent"
 
                 // Save agent's reply inside database
                 val agentMsg = ChatMessage(

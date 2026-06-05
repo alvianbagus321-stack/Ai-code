@@ -212,8 +212,19 @@ fun ChatScreen(
     var terminalOutput by remember { mutableStateOf("Welcome to Pocket AI Terminal (v1.0)\nType `help` for commands.") }
 
     val agentNames by viewModel.agentNamesFlow.collectAsState()
+    val storageType by viewModel.storageType.collectAsState()
+    val localDirectoryUri by viewModel.localDirectoryUri.collectAsState()
     var showSuggestions by remember { mutableStateOf(false) }
     var suggestionType by remember { mutableStateOf<Char?>(null) }
+    
+    val directoryPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree(),
+        onResult = { uri ->
+            if (uri != null) {
+                viewModel.setLocalDirectoryUri(uri.toString())
+            }
+        }
+    )
 
     // Launcher for file picking to load binary model file (.bin) from downloads
     val modelPickerLauncher = rememberLauncherForActivityResult(
@@ -2511,7 +2522,7 @@ fun ChatScreen(
                         androidx.compose.material3.Tab(
                             selected = settingsTabIndex == 1,
                             onClick = { settingsTabIndex = 1 },
-                            text = { Text("Drive", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (settingsTabIndex == 1) electricBlue else Color.Gray) }
+                            text = { Text("Storage", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = if (settingsTabIndex == 1) electricBlue else Color.Gray) }
                         )
                         androidx.compose.material3.Tab(
                             selected = settingsTabIndex == 2,
@@ -3111,143 +3122,167 @@ fun ChatScreen(
                             )
                         } else if (settingsTabIndex == 1) {
                             Text(
-                                text = "📁 GOOGLE DRIVE INTEGRATION",
+                                text = "📁 STORAGE CONFIGURATION",
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 11.sp,
                                 color = electricBlue,
                                 modifier = Modifier.padding(bottom = 8.dp)
                             )
-
-                            Card(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(bottom = 12.dp),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
-                                border = BorderStroke(1.dp, Color(0xFF334155)),
-                                shape = RoundedCornerShape(10.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Text(
-                                            text = "🌐 Sinkronisasi Cloud Google Drive",
-                                            color = Color.White,
-                                            fontSize = 12.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-
-                                        val driveLinked by viewModel.isDriveLinked.collectAsState()
-                                        Text(
-                                            text = if (driveLinked) "TERDAPAT LINK 🟢" else "TERPUTUS 🔴",
-                                            color = if (driveLinked) securityEmerald else Color(0xFFEF4444),
-                                            fontSize = 9.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-
-                                    Text(
-                                        text = "Menghubungkan multi-agent AI secara native dengan Google Drive Anda untuk menyimpan (.create) dan memuat (.read) berkas pekerjaan secara instan.",
-                                        color = Color(0xFF94A3B8),
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(bottom = 12.dp)
-                                    )
-
-                                    var editClientId by remember { mutableStateOf(viewModel.getGoogleDriveClientId()) }
-                                    var editClientSecret by remember { mutableStateOf(viewModel.getGoogleDriveClientSecret()) }
-                                    var editManualToken by remember { mutableStateOf(viewModel.getGoogleDriveManualToken()) }
-
-                                    OutlinedTextField(
-                                        value = editClientId,
-                                        onValueChange = {
-                                            editClientId = it
-                                            viewModel.setGoogleDriveClientId(it)
-                                        },
-                                        label = { Text("Google OAuth Client ID", fontSize = 10.sp) },
-                                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = electricBlue,
-                                            unfocusedBorderColor = Color(0xFF334155),
-                                            focusedLabelColor = electricBlue,
-                                            unfocusedLabelColor = Color(0xFF64748B)
-                                        )
-                                    )
-
-                                    OutlinedTextField(
-                                        value = editClientSecret,
-                                        onValueChange = {
-                                            editClientSecret = it
-                                            viewModel.setGoogleDriveClientSecret(it)
-                                        },
-                                        label = { Text("Google OAuth Client Secret", fontSize = 10.sp) },
-                                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = electricBlue,
-                                            unfocusedBorderColor = Color(0xFF334155),
-                                            focusedLabelColor = electricBlue,
-                                            unfocusedLabelColor = Color(0xFF64748B)
-                                        )
-                                    )
-
-                                    OutlinedTextField(
-                                        value = editManualToken,
-                                        onValueChange = {
-                                            editManualToken = it
-                                            viewModel.setGoogleDriveManualToken(it)
-                                        },
-                                        label = { Text("Access Token Manual (Alternatif Instan)", fontSize = 10.sp) },
-                                        textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp),
-                                        modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                                        colors = OutlinedTextFieldDefaults.colors(
-                                            focusedBorderColor = electricBlue,
-                                            unfocusedBorderColor = Color(0xFF334155),
-                                            focusedLabelColor = electricBlue,
-                                            unfocusedLabelColor = Color(0xFF64748B)
-                                        )
-                                    )
-
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        val driveLinked by viewModel.isDriveLinked.collectAsState()
-                                        val context = androidx.compose.ui.platform.LocalContext.current
-
-                                        Button(
-                                            onClick = {
-                                                val clientId = editClientId.trim()
-                                                if (clientId.isNotEmpty()) {
-                                                    val authUrl = viewModel.getGoogleDriveAuthUrl(clientId)
-                                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl))
-                                                    context.startActivity(intent)
-                                                } else {
-                                                    viewModel.logEvent("Gagal menghubungkan: Google OAuth Client ID wajib diisi!")
-                                                }
-                                            },
-                                            colors = ButtonDefaults.buttonColors(containerColor = electricBlue),
-                                            modifier = Modifier.weight(1f),
-                                            shape = RoundedCornerShape(8.dp)
+                            Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                val isDrive = storageType == "drive"
+                                Card(
+                                    modifier = Modifier.weight(1f).clickable { viewModel.setStorageType("drive") },
+                                    colors = CardDefaults.cardColors(containerColor = if (isDrive) electricBlue else Color(0xFF1E293B)),
+                                ) {
+                                    Text("Google Drive", modifier = Modifier.padding(12.dp).fillMaxWidth(), color = Color.White, textAlign = TextAlign.Center)
+                                }
+                                Card(
+                                    modifier = Modifier.weight(1f).clickable { viewModel.setStorageType("local") },
+                                    colors = CardDefaults.cardColors(containerColor = if (!isDrive) electricBlue else Color(0xFF1E293B)),
+                                ) {
+                                    Text("Local Storage", modifier = Modifier.padding(12.dp).fillMaxWidth(), color = Color.White, textAlign = TextAlign.Center)
+                                }
+                            }
+                            if (storageType == "local") {
+                                Button(onClick = { directoryPickerLauncher.launch(null) }, modifier = Modifier.fillMaxWidth()) {
+                                    Text("Pilih Direktori Penyimpanan")
+                                }
+                                if (localDirectoryUri != null) {
+                                  Text("Direktori: ${localDirectoryUri?.takeLast(20)}", fontSize = 10.sp, color = Color.Gray)
+                                }
+                            } else {
+                                // Original Google Drive UI logic
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Text("Login Web", fontSize = 11.sp, color = Color.White)
+                                            Text(
+                                                text = "🌐 Sinkronisasi Cloud Google Drive",
+                                                color = Color.White,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+
+                                            val driveLinked by viewModel.isDriveLinked.collectAsState()
+                                            Text(
+                                                text = if (driveLinked) "TERDAPAT LINK 🟢" else "TERPUTUS 🔴",
+                                                color = if (driveLinked) securityEmerald else Color(0xFFEF4444),
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
                                         }
 
-                                        if (driveLinked) {
+                                        Text(
+                                            text = "Menghubungkan multi-agent AI secara native dengan Google Drive Anda untuk menyimpan (.create) dan memuat (.read) berkas pekerjaan secara instan.",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 10.sp,
+                                            modifier = Modifier.padding(bottom = 12.dp)
+                                        )
+
+                                        var editClientId by remember { mutableStateOf(viewModel.getGoogleDriveClientId()) }
+                                        var editClientSecret by remember { mutableStateOf(viewModel.getGoogleDriveClientSecret()) }
+                                        var editManualToken by remember { mutableStateOf(viewModel.getGoogleDriveManualToken()) }
+
+                                        OutlinedTextField(
+                                            value = editClientId,
+                                            onValueChange = {
+                                                editClientId = it
+                                                viewModel.setGoogleDriveClientId(it)
+                                            },
+                                            label = { Text("Google OAuth Client ID", fontSize = 10.sp) },
+                                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp),
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = electricBlue,
+                                                unfocusedBorderColor = Color(0xFF334155),
+                                                focusedLabelColor = electricBlue,
+                                                unfocusedLabelColor = Color(0xFF64748B)
+                                            )
+                                        )
+
+                                        OutlinedTextField(
+                                            value = editClientSecret,
+                                            onValueChange = {
+                                                editClientSecret = it
+                                                viewModel.setGoogleDriveClientSecret(it)
+                                            },
+                                            label = { Text("Google OAuth Client Secret", fontSize = 10.sp) },
+                                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp),
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = electricBlue,
+                                                unfocusedBorderColor = Color(0xFF334155),
+                                                focusedLabelColor = electricBlue,
+                                                unfocusedLabelColor = Color(0xFF64748B)
+                                            )
+                                        )
+
+                                        OutlinedTextField(
+                                            value = editManualToken,
+                                            onValueChange = {
+                                                editManualToken = it
+                                                viewModel.setGoogleDriveManualToken(it)
+                                            },
+                                            label = { Text("Access Token Manual (Alternatif Instan)", fontSize = 10.sp) },
+                                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.White, fontSize = 11.sp),
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                                            colors = OutlinedTextFieldDefaults.colors(
+                                                focusedBorderColor = electricBlue,
+                                                unfocusedBorderColor = Color(0xFF334155),
+                                                focusedLabelColor = electricBlue,
+                                                unfocusedLabelColor = Color(0xFF64748B)
+                                            )
+                                        )
+
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                        ) {
+                                            val driveLinked by viewModel.isDriveLinked.collectAsState()
+                                            val context = androidx.compose.ui.platform.LocalContext.current
+
                                             Button(
                                                 onClick = {
-                                                    viewModel.unlinkGoogleDrive()
-                                                    editClientId = ""
-                                                    editClientSecret = ""
-                                                    editManualToken = ""
+                                                    val clientId = editClientId.trim()
+                                                    if (clientId.isNotEmpty()) {
+                                                        val authUrl = viewModel.getGoogleDriveAuthUrl(clientId)
+                                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(authUrl))
+                                                        context.startActivity(intent)
+                                                    } else {
+                                                        viewModel.logEvent("Gagal menghubungkan: Google OAuth Client ID wajib diisi!")
+                                                    }
                                                 },
-                                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                                colors = ButtonDefaults.buttonColors(containerColor = electricBlue),
                                                 modifier = Modifier.weight(1f),
                                                 shape = RoundedCornerShape(8.dp)
                                             ) {
-                                                Text("Putuskan", fontSize = 11.sp, color = Color.White)
+                                                Text("Login Web", fontSize = 11.sp, color = Color.White)
+                                            }
+
+                                            if (driveLinked) {
+                                                Button(
+                                                    onClick = {
+                                                        viewModel.unlinkGoogleDrive()
+                                                        editClientId = ""
+                                                        editClientSecret = ""
+                                                        editManualToken = ""
+                                                    },
+                                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444)),
+                                                    modifier = Modifier.weight(1f),
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Text("Putuskan", fontSize = 11.sp, color = Color.White)
+                                                }
                                             }
                                         }
                                     }

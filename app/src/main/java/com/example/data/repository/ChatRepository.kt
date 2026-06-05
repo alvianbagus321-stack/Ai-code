@@ -281,7 +281,7 @@ class ChatRepository(
                     timestamp = System.currentTimeMillis(),
                     inferenceTimeMs = result.timeMs,
                     tokensPerSecond = if (result.timeMs > 0) speed else 0f,
-                    engineType = if (result.searchResults.isNotEmpty()) "Gemini 2.5 Flash (Grounded)" else "Gemini 2.5 Flash (Online)"
+                    engineType = if (result.searchResults.isNotEmpty()) "Gemini 3.5 Flash (Grounded)" else "Gemini 3.5 Flash (Online)"
                 )
             }
         } else {

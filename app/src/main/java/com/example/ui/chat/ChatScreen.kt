@@ -1726,7 +1726,7 @@ fun ChatScreen(
                         Spacer(modifier = Modifier.height(8.dp))
                         
                         Text(
-                            text = if (isOnlineMode) "Running Gemini 2.5 Flash. Real-time DuckDuckGo lookup is trained directly into model conversation history dynamically. Full access."
+                            text = if (isOnlineMode) "Running Gemini 3.5 Flash. Real-time DuckDuckGo lookup is trained directly into model conversation history dynamically. Full access."
                                    else "All processing remains strictly offline. Running Llama / Local Sandbox. Tap the top cloud switch to connect live.",
                             color = Color(0xFF94A3B8),
                             fontSize = 13.sp,
@@ -2343,7 +2343,7 @@ fun ChatScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Uses Gemini 2.5 Flash for grounded replies",
+                                text = "Uses Gemini 3.5 Flash for grounded replies",
                                 color = Color(0xFF64748B),
                                 fontSize = 10.sp
                             )
@@ -2484,7 +2484,7 @@ fun ChatScreen(
                                 Text("✨", fontSize = 18.sp)
                                 Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = "Gemini 2.5 Image",
+                                    text = "Gemini 3.5 Image",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 11.sp,
                                     color = if (isGeminiSelected) Color(0xFF60A5FA) else Color.White

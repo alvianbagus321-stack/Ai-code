@@ -257,7 +257,7 @@ class OnlineLlmEngine {
             generationConfig.put("temperature", 0.7)
             rootJson.put("generationConfig", generationConfig)
 
-            // Execute POST request to Gemini 2.5 Flash
+            // Execute POST request to Gemini 3.5 Flash
             val requestBodyStr = rootJson.toString()
             val mediaType = "application/json; charset=utf-8".toMediaType()
             val body = requestBodyStr.toRequestBody(mediaType)
@@ -326,9 +326,9 @@ class OnlineLlmEngine {
     }
 
     /**
-     * Executes the Google Gemini 2.5 Image generation or fallback Pollinations AI API request.
+     * Executes the Google Gemini 3.5 Image generation or fallback Pollinations AI API request.
      * Mode: "alternative" uses Pollinations AI directly (fully free, no API key).
-     * Mode: "imagen" uses Google Gemini 2.5 Image and falls back if there's an error.
+     * Mode: "imagen" uses Google Gemini 3.5 Image and falls back if there's an error.
      */
     suspend fun generateImagenResponse(
         prompt: String,
@@ -361,7 +361,7 @@ class OnlineLlmEngine {
             }
         }
 
-        // Attempt 1: Call Google Gemini 2.5 Image API
+        // Attempt 1: Call Google Gemini 3.5 Image API
         if (mode == "imagen") {
             try {
                 val cleanedApiKey = apiKey.trim().removeSurrounding("\"").removeSurrounding("'")
@@ -395,7 +395,7 @@ class OnlineLlmEngine {
                     val mediaType = "application/json; charset=utf-8".toMediaType()
                     val body = rootJson.toString().toRequestBody(mediaType)
                     
-                    // Call the modern developer Gemini 2.5 Image model endpoint
+                    // Call the modern developer Gemini 3.5 Image model endpoint
                     val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=$cleanedApiKey"
 
                     val request = Request.Builder()
@@ -431,7 +431,7 @@ class OnlineLlmEngine {
                                 }
 
                                 val duration = System.currentTimeMillis() - startTime
-                                val markdownResponse = "[Generated with Google Gemini 2.5 Image]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan Google Gemini 2.5 Image untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})"
+                                val markdownResponse = "[Generated with Google Gemini 3.5 Image]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan Google Gemini 3.5 Image untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})"
 
                                 return@withContext OnlineInferenceResult(
                                     text = markdownResponse,
@@ -444,7 +444,7 @@ class OnlineLlmEngine {
                             }
                         } else {
                             googleError = "HTTP ${response.code}: ${response.message}\n$responseBodyStr"
-                            Log.w("OnlineLlmEngine", "Google Gemini 2.5 Image API failed: $googleError")
+                            Log.w("OnlineLlmEngine", "Google Gemini 3.5 Image API failed: $googleError")
                         }
                     }
                 } else {
@@ -452,7 +452,7 @@ class OnlineLlmEngine {
                 }
             } catch (e: Exception) {
                 googleError = e.localizedMessage
-                Log.w("OnlineLlmEngine", "Error calling Google Gemini 2.5 Image REST: ${e.message}", e)
+                Log.w("OnlineLlmEngine", "Error calling Google Gemini 3.5 Image REST: ${e.message}", e)
             }
         }
 

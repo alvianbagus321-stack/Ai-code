@@ -327,6 +327,7 @@ class OnlineLlmEngine {
 
     /**
      * Executes the Google Imagen 3 image generation API request.
+     * Falls back to Pollinations AI locally-cached rendering if Google Imagen 3 is whitelisted/restricted.
      */
     suspend fun generateImagenResponse(
         prompt: String,
@@ -334,73 +335,114 @@ class OnlineLlmEngine {
         context: android.content.Context
     ): OnlineInferenceResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
+        var googleError: String? = null
+
+        // Attempt 1: Call Google Imagen 3 API
         try {
-            val rootJson = JSONObject()
-            rootJson.put("prompt", prompt)
-            rootJson.put("numberOfImages", 1)
-            rootJson.put("outputMimeType", "image/jpeg")
-            rootJson.put("aspectRatio", "1:1")
-
-            val mediaType = "application/json; charset=utf-8".toMediaType()
-            val body = rootJson.toString().toRequestBody(mediaType)
-
             val cleanedApiKey = apiKey.trim().removeSurrounding("\"").removeSurrounding("'")
-            val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages?key=$cleanedApiKey"
+            if (cleanedApiKey.isNotEmpty() && cleanedApiKey.length > 5) {
+                val rootJson = JSONObject()
+                rootJson.put("prompt", prompt)
+                rootJson.put("numberOfImages", 1)
+                rootJson.put("outputMimeType", "image/jpeg")
+                rootJson.put("aspectRatio", "1:1")
 
-            val request = Request.Builder()
-                .url(endpointUrl)
-                .post(body)
-                .build()
+                val mediaType = "application/json; charset=utf-8".toMediaType()
+                val body = rootJson.toString().toRequestBody(mediaType)
+                val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages?key=$cleanedApiKey"
 
-            client.newCall(request).execute().use { response ->
-                val responseBodyStr = response.body?.string() ?: ""
-                val duration = System.currentTimeMillis() - startTime
+                val request = Request.Builder()
+                    .url(endpointUrl)
+                    .post(body)
+                    .build()
 
-                if (!response.isSuccessful) {
-                    val errMsg = "HTTP ${response.code}: ${response.message}\n$responseBodyStr"
-                    Log.e("OnlineLlmEngine", "Imagen 3 API error: $errMsg")
-                    return@withContext OnlineInferenceResult(
-                        text = "Gagal memproses pembuatan gambar melalui Imagen 3. Pastikan API Key Anda sudah dikonfigurasi dengan benar.\n\nDetail Error: $errMsg",
-                        searchResults = emptyList(),
-                        timeMs = duration,
-                        isSuccess = false,
-                        error = errMsg
-                    )
+                client.newCall(request).execute().use { response ->
+                    val responseBodyStr = response.body?.string() ?: ""
+                    if (response.isSuccessful) {
+                        val rootObj = JSONObject(responseBodyStr)
+                        val generatedImages = rootObj.getJSONArray("generatedImages")
+                        val firstImageObj = generatedImages.getJSONObject(0)
+                        val imageObj = firstImageObj.getJSONObject("image")
+                        val base64Bytes = imageObj.getString("imageBytes")
+
+                        val cacheDir = context.cacheDir
+                        val imageFile = java.io.File(cacheDir, "imagen_${System.currentTimeMillis()}.jpg")
+                        java.io.FileOutputStream(imageFile).use { fos ->
+                            val decoded = android.util.Base64.decode(base64Bytes, android.util.Base64.DEFAULT)
+                            fos.write(decoded)
+                        }
+
+                        val duration = System.currentTimeMillis() - startTime
+                        val markdownResponse = "[Generated with Google Imagen 3]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan Google Imagen 3 untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})"
+
+                        return@withContext OnlineInferenceResult(
+                            text = markdownResponse,
+                            searchResults = emptyList(),
+                            timeMs = duration,
+                            isSuccess = true
+                        )
+                    } else {
+                        googleError = "HTTP ${response.code}: ${response.message}\n$responseBodyStr"
+                        Log.w("OnlineLlmEngine", "Google Imagen 3 API failed: $googleError")
+                    }
                 }
-
-                val rootObj = JSONObject(responseBodyStr)
-                val generatedImages = rootObj.getJSONArray("generatedImages")
-                val firstImageObj = generatedImages.getJSONObject(0)
-                val imageObj = firstImageObj.getJSONObject("image")
-                val base64Bytes = imageObj.getString("imageBytes")
-
-                // Save base64 image bytes to secure local app cache directory
-                val cacheDir = context.cacheDir
-                val imageFile = java.io.File(cacheDir, "imagen_${System.currentTimeMillis()}.jpg")
-                java.io.FileOutputStream(imageFile).use { fos ->
-                    val decoded = android.util.Base64.decode(base64Bytes, android.util.Base64.DEFAULT)
-                    fos.write(decoded)
-                }
-
-                val markdownResponse = "[Generated with Imagen 3]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan Imagen 3 untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})"
-
-                return@withContext OnlineInferenceResult(
-                    text = markdownResponse,
-                    searchResults = emptyList(),
-                    timeMs = duration,
-                    isSuccess = true
-                )
+            } else {
+                googleError = "API Key tidak diset atau kosong."
             }
         } catch (e: Exception) {
-            val duration = System.currentTimeMillis() - startTime
-            Log.e("OnlineLlmEngine", "Imagen 3 exception: ${e.message}", e)
-            return@withContext OnlineInferenceResult(
-                text = "Gagal menghubungi Imagen 3. Silakan periksa koneksi internet Anda.\n\nDetail: ${e.localizedMessage}",
-                searchResults = emptyList(),
-                timeMs = duration,
-                isSuccess = false,
-                error = e.localizedMessage
-            )
+            googleError = e.localizedMessage
+            Log.w("OnlineLlmEngine", "Error calling Google Imagen 3 REST: ${e.message}", e)
         }
+
+        // Attempt 2: Smart & Robust Fallback to Pollinations AI (locally cached)
+        try {
+            Log.i("OnlineLlmEngine", "Falling back to Pollinations AI for image generation...")
+            val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
+            val fallbackUrl = "https://image.pollinations.ai/prompt/$encodedPrompt?width=1024&height=1024&nologo=true"
+
+            val fallbackRequest = Request.Builder()
+                .url(fallbackUrl)
+                .build()
+
+            client.newCall(fallbackRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bytes = response.body?.bytes()
+                    if (bytes != null && bytes.isNotEmpty()) {
+                        val cacheDir = context.cacheDir
+                        val imageFile = java.io.File(cacheDir, "fallback_${System.currentTimeMillis()}.jpg")
+                        java.io.FileOutputStream(imageFile).use { fos ->
+                            fos.write(bytes)
+                        }
+
+                        val duration = System.currentTimeMillis() - startTime
+                        val suffixMsg = if (googleError != null) {
+                            "\n\n*(Catatan: API Key Google Imagen 3 Anda mengembalikan error, jadi saya otomatis mengalihkan ke model beresolusi tinggi alternatif gratis untuk kenyamanan Anda!)*"
+                        } else ""
+
+                        val markdownResponse = "[Generated using Engine Alternatif]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan engine alternatif berkualitas tinggi untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})$suffixMsg"
+
+                        return@withContext OnlineInferenceResult(
+                            text = markdownResponse,
+                            searchResults = emptyList(),
+                            timeMs = duration,
+                            isSuccess = true
+                        )
+                    }
+                }
+            }
+        } catch (fe: Exception) {
+            Log.e("OnlineLlmEngine", "Fallback image generation failed: ${fe.message}", fe)
+        }
+
+        // Entirely failed
+        val duration = System.currentTimeMillis() - startTime
+        val finalErrMsg = googleError ?: "Gagal memproses gambar melalui Google Imagen maupun model alternatif."
+        return@withContext OnlineInferenceResult(
+            text = "Gagal memproses pembuatan gambar. Silakan periksa koneksi internet Anda atau coba prompt lain.\n\nDetail Error: $finalErrMsg",
+            searchResults = emptyList(),
+            timeMs = duration,
+            isSuccess = false,
+            error = finalErrMsg
+        )
     }
 }

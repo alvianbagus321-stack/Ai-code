@@ -21,6 +21,16 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     private val _systemLogs = MutableStateFlow<List<String>>(listOf("System Log Initialized"))
     val systemLogs: StateFlow<List<String>> = _systemLogs.asStateFlow()
 
+    data class BackupProgress(
+        val isActive: Boolean = false,
+        val isExport: Boolean = true,
+        val currentStep: String = "",
+        val detail: String = ""
+    )
+
+    private val _backupProgress = MutableStateFlow(BackupProgress())
+    val backupProgress: StateFlow<BackupProgress> = _backupProgress.asStateFlow()
+
     fun logEvent(message: String) {
         val timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())
         _systemLogs.update { list -> list + "[$timestamp] $message" }
@@ -344,11 +354,13 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     suspend fun exportFullBackup(context: android.content.Context, outputStream: java.io.OutputStream) {
         kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            _backupProgress.value = BackupProgress(isActive = true, isExport = true, currentStep = "Mempersiapkan backup...", detail = "Silakan tunggu...")
             var zipOut: java.util.zip.ZipOutputStream? = null
             try {
                 zipOut = java.util.zip.ZipOutputStream(outputStream)
                 
                 // 1. Export database as JSON and add to ZIP
+                _backupProgress.value = BackupProgress(isActive = true, isExport = true, currentStep = "Mengekspor Chat History...", detail = "Menyusun file database...")
                 val dbJson = repository.exportDatabaseToJson()
                 val dbEntry = java.util.zip.ZipEntry("database_backup.json")
                 zipOut.putNextEntry(dbEntry)
@@ -361,8 +373,15 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                 if (modelsDir.exists() && modelsDir.isDirectory) {
                     val modelFiles = modelsDir.listFiles()
                     if (modelFiles != null) {
-                        for (file in modelFiles) {
+                        for ((index, file) in modelFiles.withIndex()) {
                             if (file.isFile) {
+                                val sizeInMb = file.length() / (1024 * 1024)
+                                _backupProgress.value = BackupProgress(
+                                    isActive = true,
+                                    isExport = true,
+                                    currentStep = "Mengompres Model Offline (${index + 1}/${modelFiles.size})...",
+                                    detail = "${file.name} ($sizeInMb MB)"
+                                )
                                 val fileEntry = java.util.zip.ZipEntry("models/${file.name}")
                                 zipOut.putNextEntry(fileEntry)
                                 file.inputStream().use { input ->
@@ -375,6 +394,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     }
                 }
                 
+                _backupProgress.value = BackupProgress(isActive = true, isExport = true, currentStep = "Finalisasi backup ZIP...", detail = "Menyimpan ke lokasi tujuan...")
                 zipOut.finish()
                 logEvent("Full app backup ZIP generated successfully.")
             } catch (e: Exception) {
@@ -385,12 +405,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                 try {
                     zipOut?.close()
                 } catch (e: Exception) {}
+                _backupProgress.value = BackupProgress(isActive = false)
             }
         }
     }
 
     suspend fun importFullBackup(context: android.content.Context, inputStream: java.io.InputStream): Boolean {
         return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            _backupProgress.value = BackupProgress(isActive = true, isExport = false, currentStep = "Menganalisis file backup...", detail = "Membuka file ZIP...")
             var dbRestored = false
             var zipIn: java.util.zip.ZipInputStream? = null
             try {
@@ -402,6 +424,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                 
                 while (entry != null) {
                     if (entry.name == "database_backup.json") {
+                        _backupProgress.value = BackupProgress(isActive = true, isExport = false, currentStep = "Memulihkan Chat History...", detail = "Membaca pesan & sesi...")
                         val jsonBytes = zipIn.readBytes()
                         val jsonStr = String(jsonBytes, Charsets.UTF_8)
                         val dbSuccess = repository.importDatabaseFromJson(jsonStr)
@@ -412,6 +435,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     } else if (entry.name.startsWith("models/")) {
                         val fileName = entry.name.substringAfter("models/")
                         if (fileName.isNotEmpty() && !entry.isDirectory) {
+                            _backupProgress.value = BackupProgress(
+                                isActive = true, 
+                                isExport = false, 
+                                currentStep = "Memulihkan Model Offline...", 
+                                detail = "Mengekstrak $fileName..."
+                            )
                             val destFile = java.io.File(modelsDir, fileName)
                             if (destFile.exists()) {
                                 destFile.delete()
@@ -427,6 +456,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                 }
                 
                 if (dbRestored) {
+                    _backupProgress.value = BackupProgress(isActive = true, isExport = false, currentStep = "Memperbarui daftar model...", detail = "Menyelesaikan proses pemulihan...")
                     kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
                         val firstSession = repository.allSessions.firstOrNull()?.firstOrNull()
                         _activeSessionId.value = firstSession?.id
@@ -446,6 +476,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                 try {
                     zipIn?.close()
                 } catch (e: Exception) {}
+                _backupProgress.value = BackupProgress(isActive = false)
             }
         }
     }

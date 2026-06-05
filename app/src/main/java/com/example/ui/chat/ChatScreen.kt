@@ -168,6 +168,7 @@ fun ChatScreen(
 
     val devModeEnabled by viewModel.devModeEnabled.collectAsState()
     val bypassFilterActive by viewModel.bypassFilterActive.collectAsState()
+    val backupProgress by viewModel.backupProgress.collectAsState()
 
     var showSettingsDialog by remember { mutableStateOf(false) }
     var showShareDialog by remember { mutableStateOf(false) }
@@ -2228,6 +2229,71 @@ fun ChatScreen(
         }
     }
 
+    if (backupProgress.isActive) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = {}, // Cannot dismiss manually to prevent database or model file corruption
+            properties = androidx.compose.ui.window.DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false,
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    CircularProgressIndicator(
+                        color = if (backupProgress.isExport) Color(0xFF2563EB) else Color(0xFF10B981),
+                        strokeWidth = 4.dp,
+                        modifier = Modifier.size(48.dp)
+                    )
+                    Spacer(modifier = Modifier.height(20.dp))
+                    Text(
+                        text = if (backupProgress.isExport) "Mengekspor Backup ZIP..." else "Memulihkan Backup ZIP...",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = backupProgress.currentStep,
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Medium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                    if (backupProgress.detail.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = backupProgress.detail,
+                            color = Color(0xFF94A3B8),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                    Text(
+                        text = "Jangan menutup aplikasi atau mematikan perangkat Anda selama proses berlangsung. Memindahkan file model offline yang besar dapat memakan waktu beberapa menit.",
+                        color = Color(0xFFEF4444),
+                        fontSize = 11.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            }
+        }
+    }
+
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
@@ -2488,10 +2554,11 @@ fun ChatScreen(
                     )
 
                     Text(
-                        text = "Save/load SQLite DB AND all downloaded AI model binaries into a single portable backup ZIP. Save it to any local directory of your choice.",
-                        color = Color(0xFF94A3B8),
-                        fontSize = 10.sp,
-                        modifier = Modifier.padding(bottom = 8.dp)
+                        text = "Simpan atau pulihkan database chat DAN seluruh file model offline (.bin) yang sudah diunduh ke dalam satu file ZIP. Anda bisa langsung memilih cloud Google Drive Anda sebagai lokasi target di menu Android File Picker untuk memanfaatkan ratusan GB ruang penyimpanan kosong Anda secara instan dan 100% aman.",
+                        color = Color(0xFFE2E8F0),
+                        fontSize = 11.sp,
+                        modifier = Modifier.padding(bottom = 10.dp),
+                        lineHeight = 15.sp
                     )
 
                     Row(

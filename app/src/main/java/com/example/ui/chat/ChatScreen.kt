@@ -75,6 +75,7 @@ fun ChatScreen(
     val isOnlineMode by viewModel.isOnlineMode.collectAsState()
     val webSearchEnabled by viewModel.webSearchEnabled.collectAsState()
     val isActiveSessionReadOnly by viewModel.isActiveSessionReadOnly.collectAsState()
+    val isImagenModeActive by viewModel.isImagenModeActive.collectAsState()
 
     val contentResolver = context.contentResolver
     val imagePickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
@@ -1945,6 +1946,104 @@ fun ChatScreen(
                             }
                         }
 
+                        // AI Persona Presets & Imagen 3 Mode Selector
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 4.dp, vertical = 2.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            androidx.compose.foundation.lazy.LazyRow(
+                                modifier = Modifier.weight(1f),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val presets = listOf(
+                                    Triple("Standard", "You are a helpful AI assistant. Answer user queries accurately and directly.", Icons.Default.Info),
+                                    Triple("Creative", "You are a creative writer. Write deep, immersive stories, vivid descriptions, and imaginative prose with rich sensory details. Act as an expert writer.", Icons.Default.Edit),
+                                    Triple("Analysis", "You are a brilliant analytical mind and detailed problem solver. Break down complex logs, structures, formulas, or strategies step-by-step with robust reasoning.", Icons.Default.List),
+                                    Triple("Developer", "You are a seasoned software architecture expert. Provide production-ready, clean, secure, efficient, and well-commented code directly, without superfluous conversation.", Icons.Default.Build)
+                                )
+                                items(presets.size) { index ->
+                                    val preset = presets[index]
+                                    val name = preset.first
+                                    val textMatch = preset.second
+                                    val icon = preset.third
+                                    
+                                    val isActive = systemPrompt == textMatch || (name == "Standard" && (systemPrompt.isBlank() || systemPrompt.contains("helpful AI assistant")))
+                                    
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(if (isActive) electricBlue.copy(alpha = 0.25f) else Color(0xFF1E293B))
+                                            .border(1.dp, if (isActive) electricBlue else Color(0xFF334155), RoundedCornerShape(12.dp))
+                                            .clickable {
+                                                viewModel.updateSystemPrompt(textMatch)
+                                                android.widget.Toast.makeText(context, "Persona set to $name", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = name, 
+                                                tint = if (isActive) electricBlue else Color(0xFF94A3B8),
+                                                modifier = Modifier.size(10.dp)
+                                            )
+                                            Text(
+                                                text = name,
+                                                fontSize = 9.sp,
+                                                fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
+                                                color = if (isActive) Color.White else Color(0xFF94A3B8)
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            
+                            Spacer(modifier = Modifier.width(8.dp))
+                            
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(if (isImagenModeActive) Color(0xFFF59E0B).copy(alpha = 0.2f) else Color(0xFF1E293B))
+                                    .border(1.dp, if (isImagenModeActive) Color(0xFFF59E0B) else Color(0xFF334155), RoundedCornerShape(12.dp))
+                                    .clickable {
+                                        if (isOnlineMode) {
+                                            viewModel.toggleImagenMode()
+                                        } else {
+                                            android.widget.Toast.makeText(context, "Imagen 3 membutuhkan Mode Online aktif!", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    }
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Face,
+                                        contentDescription = "Imagen Mode",
+                                        tint = if (isImagenModeActive) Color(0xFFF59E0B) else Color(0xFF94A3B8),
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                    Text(
+                                        text = "Imagen 3",
+                                        fontSize = 9.sp,
+                                        fontWeight = if (isImagenModeActive) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (isImagenModeActive) Color(0xFFF59E0B) else Color(0xFF94A3B8)
+                                    )
+                                }
+                            }
+                        }
+                        
+                        HorizontalDivider(color = Color(0xFF334155).copy(alpha = 0.5f), thickness = 0.5.dp, modifier = Modifier.padding(vertical = 2.dp))
+
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1978,7 +2077,7 @@ fun ChatScreen(
                                 onValueChange = { viewModel.onUserInputChange(it) },
                                 placeholder = {
                                     Text(
-                                        text = if (isOnlineMode) "Ask online + web grounding..." else "Ask local model...",
+                                        text = if (isImagenModeActive) "Describe image to generate with Imagen 3..." else if (isOnlineMode) "Ask online + web grounding..." else "Ask local model...",
                                         color = Color(0xFF64748B),
                                         fontSize = 13.sp
                                     )
@@ -3241,6 +3340,105 @@ fun ChatBubble(
     }
 }
 
+fun highlightCode(code: String, language: String): androidx.compose.ui.text.AnnotatedString {
+    return androidx.compose.ui.text.buildAnnotatedString {
+        append(code)
+        
+        // Define beautiful modern neon code colors
+        val keywordColor = Color(0xFFF43F5E) // Radiant Red/Rose
+        val typeColor = Color(0xFF38BDF8)    // Sky Blue
+        val stringColor = Color(0xFF34D399)  // Mint Green
+        val commentColor = Color(0xFF64748B) // Slate Gray
+        val numberColor = Color(0xFFF59E0B)  // Golden Amber / Yellow
+        
+        // 1. Identify and color comments (Line comments and Block comments)
+        // Find line comments: "//"
+        var index = 0
+        while (index < code.length) {
+            val lineCommentStart = code.indexOf("//", index)
+            if (lineCommentStart != -1) {
+                val lineCommentEnd = code.indexOf("\n", lineCommentStart)
+                val end = if (lineCommentEnd != -1) lineCommentEnd else code.length
+                addStyle(androidx.compose.ui.text.SpanStyle(color = commentColor), lineCommentStart, end)
+                index = end
+            } else {
+                break
+            }
+        }
+        
+        // Find block comments: "/*" -> "*/"
+        index = 0
+        while (index < code.length) {
+            val blockCommentStart = code.indexOf("/*", index)
+            if (blockCommentStart != -1) {
+                val blockCommentEnd = code.indexOf("*/", blockCommentStart)
+                val end = if (blockCommentEnd != -1) blockCommentEnd + 2 else code.length
+                addStyle(androidx.compose.ui.text.SpanStyle(color = commentColor), blockCommentStart, end)
+                index = end
+            } else {
+                break
+            }
+        }
+
+        // 2. Identify and color strings (single and double quotes)
+        var stringStartIndex = -1
+        var inString = false
+        var quoteChar = '"'
+        index = 0
+        while (index < code.length) {
+            val char = code[index]
+            if ((char == '"' || char == '\'') && (index == 0 || code[index - 1] != '\\')) {
+                if (!inString) {
+                    inString = true
+                    stringStartIndex = index
+                    quoteChar = char
+                } else if (char == quoteChar) {
+                    addStyle(androidx.compose.ui.text.SpanStyle(color = stringColor), stringStartIndex, index + 1)
+                    inString = false
+                }
+            }
+            index++
+        }
+
+        // 3. Highlight keywords and common structures
+        val keywordsList = listOf(
+            "fun", "class", "interface", "val", "var", "import", "package", "return", "if", "else", 
+            "while", "for", "try", "catch", "null", "true", "false", "this", "super", "when", 
+            "private", "public", "protected", "override", "open", "abstract", "const", "companion", 
+            "object", "inline", "suspend", "coroutine", "def", "import", "as", "from", "let", "const",
+            "function", "var", "let", "async", "await", "yield", "interface", "module", "export"
+        )
+        
+        val typesList = listOf(
+            "String", "Int", "Boolean", "Long", "Float", "Double", "List", "Map", "Set", 
+            "Context", "View", "Modifier", "State", "Flow", "ViewModel", "Activity", "Fragment",
+            "Color", "Column", "Row", "Box", "Card", "Button", "Text", "Icons", "Icon"
+        )
+
+        // Highlight Keywords
+        for (kw in keywordsList) {
+            val regex = "\\b$kw\\b".toRegex()
+            regex.findAll(code).forEach { matchResult ->
+                addStyle(androidx.compose.ui.text.SpanStyle(color = keywordColor, fontWeight = FontWeight.Bold), matchResult.range.first, matchResult.range.last + 1)
+            }
+        }
+
+        // Highlight Types
+        for (tp in typesList) {
+            val regex = "\\b$tp\\b".toRegex()
+            regex.findAll(code).forEach { matchResult ->
+                addStyle(androidx.compose.ui.text.SpanStyle(color = typeColor), matchResult.range.first, matchResult.range.last + 1)
+            }
+        }
+        
+        // Highlight Numbers
+        val numRegex = "\\b\\d+(\\.\\d+)?\\b".toRegex()
+        numRegex.findAll(code).forEach { matchResult ->
+            addStyle(androidx.compose.ui.text.SpanStyle(color = numberColor), matchResult.range.first, matchResult.range.last + 1)
+        }
+    }
+}
+
 sealed class MarkdownToken {
     data class Text(val content: String) : MarkdownToken()
     data class Image(val alt: String, val url: String) : MarkdownToken()
@@ -3330,12 +3528,17 @@ fun downloadImageFromUrl(context: android.content.Context, imageUrl: String, des
     val coroutineScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
     coroutineScope.launch {
         try {
-            val url = java.net.URL(imageUrl)
-            val connection = url.openConnection() as java.net.HttpURLConnection
-            connection.doInput = true
-            connection.connect()
-            val input = connection.inputStream
-            val bitmap = android.graphics.BitmapFactory.decodeStream(input)
+            val bitmap = if (imageUrl.startsWith("file://")) {
+                val filePath = imageUrl.substringAfter("file://")
+                android.graphics.BitmapFactory.decodeFile(filePath)
+            } else {
+                val url = java.net.URL(imageUrl)
+                val connection = url.openConnection() as java.net.HttpURLConnection
+                connection.doInput = true
+                connection.connect()
+                val input = connection.inputStream
+                android.graphics.BitmapFactory.decodeStream(input)
+            }
             
             if (bitmap != null) {
                 val displayName = "AI_${System.currentTimeMillis()}.jpg"
@@ -3535,29 +3738,53 @@ fun MarkdownTextWithImages(
                                     fontFamily = FontFamily.Monospace,
                                     fontWeight = FontWeight.Bold
                                 )
-                                IconButton(
-                                    onClick = {
-                                        val extension = when (token.language.lowercase()) {
-                                            "python" -> "py"
-                                            "javascript", "js" -> "js"
-                                            "html" -> "html"
-                                            "css" -> "css"
-                                            "kotlin", "kt" -> "kt"
-                                            "java" -> "java"
-                                            "json" -> "json"
-                                            else -> "txt"
-                                        }
-                                        val fileName = "generated_code_${System.currentTimeMillis()}.$extension"
-                                        downloadTextFile(context, fileName, token.code)
-                                    },
-                                    modifier = Modifier.size(24.dp)
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Share,
-                                        contentDescription = "Download source",
-                                        tint = Color(0xFF60A5FA),
-                                        modifier = Modifier.size(14.dp)
-                                    )
+                                    // COPY BUTTON
+                                    IconButton(
+                                        onClick = {
+                                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                                            val clip = android.content.ClipData.newPlainText("Copied Code", token.code)
+                                            clipboard.setPrimaryClip(clip)
+                                            android.widget.Toast.makeText(context, "Code copied successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Edit,
+                                            contentDescription = "Copy code",
+                                            tint = Color(0xFF34D399),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+
+                                    // DOWNLOAD/EXPORT FILE
+                                    IconButton(
+                                        onClick = {
+                                            val extension = when (token.language.lowercase()) {
+                                                "python" -> "py"
+                                                "javascript", "js" -> "js"
+                                                "html" -> "html"
+                                                "css" -> "css"
+                                                "kotlin", "kt" -> "kt"
+                                                "java" -> "java"
+                                                "json" -> "json"
+                                                else -> "txt"
+                                            }
+                                            val fileName = "generated_code_${System.currentTimeMillis()}.$extension"
+                                            downloadTextFile(context, fileName, token.code)
+                                        },
+                                        modifier = Modifier.size(24.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Share,
+                                            contentDescription = "Download source",
+                                            tint = Color(0xFF60A5FA),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
                                 }
                             }
                             val scrollState = androidx.compose.foundation.rememberScrollState()
@@ -3568,7 +3795,7 @@ fun MarkdownTextWithImages(
                                     .padding(12.dp)
                             ) {
                                 Text(
-                                    text = token.code,
+                                    text = highlightCode(token.code, token.language),
                                     color = Color(0xFFE2E8F0),
                                     fontSize = 11.sp,
                                     fontFamily = FontFamily.Monospace,

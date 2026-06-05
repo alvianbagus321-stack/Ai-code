@@ -155,7 +155,8 @@ class ChatRepository(
         webSearchEnabled: Boolean,
         apiKey: String,
         systemPrompt: String = "",
-        imageBase64: String? = null
+        imageBase64: String? = null,
+        isImagenActive: Boolean = false
     ) {
         // 1. Save user prompt
         val userMsg = ChatMessage(
@@ -222,33 +223,50 @@ class ChatRepository(
             }
         }
 
-        // 2. Perform either online or on-device offline inference
+        // 2. Perform either online (optionally with Imagen mode) or on-device offline inference
         val modelMsg = if (isOnlineMode) {
-            val previousMessages = chatDao.getMessagesForSession(sessionId).firstOrNull() ?: emptyList()
-            // Exclude the recently inserted userMsg from history since the engine appends the user prompt separately
-            val history = previousMessages.filter { it.id != userMsg.id }
-            
-            val result = onlineLlmEngine.generateGroundedResponse(
-                prompt = promptText,
-                history = history,
-                apiKey = apiKey,
-                searchEnabled = webSearchEnabled,
-                systemPrompt = systemPrompt,
-                imageBase64 = imageBase64,
-                bypassFilterActive = bypassFilterActive.value
-            )
+            if (isImagenActive) {
+                val result = onlineLlmEngine.generateImagenResponse(
+                    prompt = promptText,
+                    apiKey = apiKey,
+                    context = context
+                )
+                ChatMessage(
+                    sessionId = sessionId,
+                    role = "model",
+                    content = result.text,
+                    timestamp = System.currentTimeMillis(),
+                    inferenceTimeMs = result.timeMs,
+                    tokensPerSecond = 0f,
+                    engineType = "Imagen 3 (Online)"
+                )
+            } else {
+                val previousMessages = chatDao.getMessagesForSession(sessionId).firstOrNull() ?: emptyList()
+                // Exclude the recently inserted userMsg from history since the engine appends the user prompt separately
+                val history = previousMessages.filter { it.id != userMsg.id }
+                
+                val result = onlineLlmEngine.generateGroundedResponse(
+                    prompt = promptText,
+                    history = history,
+                    apiKey = apiKey,
+                    searchEnabled = webSearchEnabled,
+                    systemPrompt = systemPrompt,
+                    imageBase64 = imageBase64,
+                    bypassFilterActive = bypassFilterActive.value
+                )
 
-            val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)
+                val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)
 
-            ChatMessage(
-                sessionId = sessionId,
-                role = "model",
-                content = result.text,
-                timestamp = System.currentTimeMillis(),
-                inferenceTimeMs = result.timeMs,
-                tokensPerSecond = if (result.timeMs > 0) speed else 0f,
-                engineType = if (result.searchResults.isNotEmpty()) "Gemini 2.5 Flash (Grounded)" else "Gemini 2.5 Flash (Online)"
-            )
+                ChatMessage(
+                    sessionId = sessionId,
+                    role = "model",
+                    content = result.text,
+                    timestamp = System.currentTimeMillis(),
+                    inferenceTimeMs = result.timeMs,
+                    tokensPerSecond = if (result.timeMs > 0) speed else 0f,
+                    engineType = if (result.searchResults.isNotEmpty()) "Gemini 2.5 Flash (Grounded)" else "Gemini 2.5 Flash (Online)"
+                )
+            }
         } else {
             val result = offlineLlmEngine.generateResponse(promptText, apiKey, systemPrompt)
             ChatMessage(

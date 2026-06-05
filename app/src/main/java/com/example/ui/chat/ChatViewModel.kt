@@ -55,6 +55,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     private val _systemPrompt = MutableStateFlow("You are a helpful AI assistant. Answer user queries accurately and directly.")
     val systemPrompt: StateFlow<String> = _systemPrompt.asStateFlow()
 
+    private val _isImagenModeActive = MutableStateFlow(false)
+    val isImagenModeActive: StateFlow<Boolean> = _isImagenModeActive.asStateFlow()
+
+    fun toggleImagenMode() {
+        _isImagenModeActive.value = !_isImagenModeActive.value
+        logEvent("Toggled Imagen 3 Mode. Active: ${_isImagenModeActive.value}")
+    }
+
     fun updateSystemPrompt(newPrompt: String) {
         _systemPrompt.value = newPrompt
     }
@@ -264,8 +272,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     webSearchEnabled = _webSearchEnabled.value,
                     apiKey = _apiKey.value,
                     systemPrompt = _systemPrompt.value,
-                    imageBase64 = imgBase64
+                    imageBase64 = imgBase64,
+                    isImagenActive = _isImagenModeActive.value
                 )
+                if (_isImagenModeActive.value) {
+                    _isImagenModeActive.value = false
+                }
                 logEvent("Message response received and saved successfully.")
             } catch (e: Exception) {
                 logEvent("Error sending message: ${e.message}")

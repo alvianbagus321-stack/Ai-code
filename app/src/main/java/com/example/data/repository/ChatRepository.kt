@@ -38,6 +38,9 @@ class ChatRepository(
     private val _vaultBgOpacity = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getFloat("vault_bg_opacity", 0.5f))
     val vaultBgOpacity: StateFlow<Float> = _vaultBgOpacity.asStateFlow()
 
+    private val _inputBarOpacity = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getFloat("input_bar_opacity", 0.9f))
+    val inputBarOpacity: StateFlow<Float> = _inputBarOpacity.asStateFlow()
+
     fun setThemeColor(colorHex: String?) {
         sharedPrefs.edit().putString("theme_color", colorHex).apply()
         _themeColor.value = colorHex
@@ -66,6 +69,11 @@ class ChatRepository(
     fun setVaultBgOpacity(opacity: Float) {
         sharedPrefs.edit().putFloat("vault_bg_opacity", opacity).apply()
         _vaultBgOpacity.value = opacity
+    }
+
+    fun setInputBarOpacity(opacity: Float) {
+        sharedPrefs.edit().putFloat("input_bar_opacity", opacity).apply()
+        _inputBarOpacity.value = opacity
     }
 
     private val onlineLlmEngine = OnlineLlmEngine()

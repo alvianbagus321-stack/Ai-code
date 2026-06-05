@@ -81,12 +81,67 @@ fun ChatScreen(
         uri?.let {
             coroutineScope.launch(kotlinx.coroutines.Dispatchers.IO) {
                 try {
-                    val inputStream = contentResolver.openInputStream(it)
-                    val bytes = inputStream?.readBytes()
-                    inputStream?.close()
-                    if (bytes != null) {
-                        val base64Str = android.util.Base64.encodeToString(bytes, android.util.Base64.DEFAULT)
-                        viewModel.setImageBase64(base64Str)
+                    // Check original image dimensions without full memory allocation
+                    val options = android.graphics.BitmapFactory.Options().apply {
+                        inJustDecodeBounds = true
+                    }
+                    contentResolver.openInputStream(it)?.use { input ->
+                        android.graphics.BitmapFactory.decodeStream(input, null, options)
+                    }
+
+                    val srcWidth = options.outWidth
+                    val srcHeight = options.outHeight
+                    
+                    if (srcWidth > 0 && srcHeight > 0) {
+                        // Max target resolution 800px on either dimension
+                        val maxDimension = 800
+                        var sampleSize = 1
+                        while ((srcWidth / sampleSize) > maxDimension || (srcHeight / sampleSize) > maxDimension) {
+                            sampleSize *= 2
+                        }
+
+                        // Load sample-downsized version of image securely to avoid heap exhaustion
+                        val decodeOptions = android.graphics.BitmapFactory.Options().apply {
+                            inSampleSize = sampleSize
+                        }
+                        val sampledBitmap = contentResolver.openInputStream(it)?.use { input ->
+                            android.graphics.BitmapFactory.decodeStream(input, null, decodeOptions)
+                        }
+
+                        if (sampledBitmap != null) {
+                            // Scale precisely to max size of maxDimension if still larger
+                            val currentWidth = sampledBitmap.width
+                            val currentHeight = sampledBitmap.height
+                            val finalBitmap = if (currentWidth > maxDimension || currentHeight > maxDimension) {
+                                val ratio = currentWidth.toFloat() / currentHeight.toFloat()
+                                val targetWidth: Int
+                                val targetHeight: Int
+                                if (currentWidth > currentHeight) {
+                                    targetWidth = maxDimension
+                                    targetHeight = (maxDimension / ratio).toInt()
+                                } else {
+                                    targetHeight = maxDimension
+                                    targetWidth = (maxDimension * ratio).toInt()
+                                }
+                                android.graphics.Bitmap.createScaledBitmap(sampledBitmap, targetWidth, targetHeight, true).also { scaled ->
+                                    if (scaled != sampledBitmap) {
+                                        sampledBitmap.recycle()
+                                    }
+                                }
+                            } else {
+                                sampledBitmap
+                            }
+
+                            // Quality compress to JPEG bytes (~70% quality, extremely light yet visually clean)
+                            val outStream = java.io.ByteArrayOutputStream()
+                            finalBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 70, outStream)
+                            val compressedBytes = outStream.toByteArray()
+                            finalBitmap.recycle()
+
+                            // NO_WRAP avoids raw newline formatting issues in Gemini requests and SQLite schemas
+                            val base64Str = android.util.Base64.encodeToString(compressedBytes, android.util.Base64.NO_WRAP)
+                            viewModel.setImageBase64(base64Str)
+                        }
                     }
                 } catch (e: Exception) {
                     e.printStackTrace()
@@ -262,6 +317,7 @@ fun ChatScreen(
     val vaultThemeColorHex by viewModel.vaultThemeColor.collectAsState()
     val vaultBackgroundImageUriStr by viewModel.vaultBackgroundImageUri.collectAsState()
     val vaultBgOpacityValue by viewModel.vaultBgOpacity.collectAsState()
+    val inputBarOpacityValue by viewModel.inputBarOpacity.collectAsState()
 
     val vaultCustomBgColor = try {
         (vaultThemeColorHex?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color(0xFF0F172A)).copy(alpha = vaultBgOpacityValue)
@@ -1597,14 +1653,13 @@ fun ChatScreen(
                 )
             },
             containerColor = darkSanctuaryBg,
-            contentWindowInsets = WindowInsets.systemBars
+            contentWindowInsets = WindowInsets(0, 0, 0, 0)
         ) { innerPadding ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding)
-                    // Added imePadding to ensure no keyboard overlap
-                    .imePadding()
+                    .padding(top = innerPadding.calculateTopPadding())
+                    .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom))
                     .drawBehind {
                         // Ambient blue glow behind input area
                         drawCircle(
@@ -1839,7 +1894,7 @@ fun ChatScreen(
                             modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(20.dp))
-                            .background(cardSurfaceBg)
+                            .background(cardSurfaceBg.copy(alpha = inputBarOpacityValue))
                             .border(
                                 width = if (isInputFocused) 1.5.dp else 1.dp,
                                 brush = if (isInputFocused) {
@@ -1854,8 +1909,13 @@ fun ChatScreen(
                     ) {
                         if (currentImageBase64 != null) {
                             Box(modifier = Modifier.padding(start = 12.dp, top = 4.dp)) {
-                                val bytes = android.util.Base64.decode(currentImageBase64, android.util.Base64.DEFAULT)
-                                val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                val bmp = try {
+                                    val bytes = android.util.Base64.decode(currentImageBase64, android.util.Base64.DEFAULT)
+                                    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                    null
+                                }
                                 if (bmp != null) {
                                     androidx.compose.foundation.Image(
                                         bitmap = bmp.asImageBitmap(),
@@ -1872,7 +1932,7 @@ fun ChatScreen(
                                             .align(Alignment.TopEnd)
                                             .background(Color.Black.copy(alpha = 0.6f), CircleShape)
                                             .padding(2.dp)
-                                    ) {
+                                      ) {
                                         Icon(imageVector = Icons.Default.Close, contentDescription = "Remove", tint = Color.White, modifier = Modifier.size(12.dp))
                                     }
                                 }
@@ -2513,6 +2573,18 @@ fun ChatScreen(
                         )
                     )
 
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Input Box Opacity:", color = Color.White, fontSize = 11.sp)
+                    androidx.compose.material3.Slider(
+                        value = inputBarOpacityValue,
+                        onValueChange = { viewModel.setInputBarOpacity(it) },
+                        valueRange = 0f..1f,
+                        colors = androidx.compose.material3.SliderDefaults.colors(
+                            thumbColor = electricBlue,
+                            activeTrackColor = electricBlue
+                        )
+                    )
+
                     Spacer(modifier = Modifier.height(16.dp))
 
                     Text(
@@ -2948,8 +3020,13 @@ fun ChatBubble(
                         }
                     } else {
                         if (message.imageBase64 != null) {
-                            val bytes = android.util.Base64.decode(message.imageBase64, android.util.Base64.DEFAULT)
-                            val bmp = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            val bmp = try {
+                                val bytes = android.util.Base64.decode(message.imageBase64, android.util.Base64.DEFAULT)
+                                android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                                null
+                            }
                             if (bmp != null) {
                                 androidx.compose.foundation.Image(
                                     bitmap = bmp.asImageBitmap(),

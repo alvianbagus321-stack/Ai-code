@@ -114,6 +114,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val vaultThemeColor: StateFlow<String?> = repository.vaultThemeColor
     val vaultBackgroundImageUri: StateFlow<String?> = repository.vaultBackgroundImageUri
     val vaultBgOpacity: StateFlow<Float> = repository.vaultBgOpacity
+    val inputBarOpacity: StateFlow<Float> = repository.inputBarOpacity
 
     fun setThemeColor(colorHex: String?) {
         repository.setThemeColor(colorHex)
@@ -137,6 +138,10 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun setVaultBgOpacity(opacity: Float) {
         repository.setVaultBgOpacity(opacity)
+    }
+
+    fun setInputBarOpacity(opacity: Float) {
+        repository.setInputBarOpacity(opacity)
     }
 
     fun attemptEnableDevMode(password: String): Boolean = repository.attemptEnableDevMode(password)

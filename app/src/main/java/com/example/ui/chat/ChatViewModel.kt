@@ -135,13 +135,71 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val backgroundImageUri: StateFlow<String?> = repository.backgroundImageUri
     val bgOpacity: StateFlow<Float> = repository.bgOpacity
 
+    // Multi-Agent State Flow Exposures
+    val currentActiveAgentRunning: StateFlow<String?> = repository.currentActiveAgentRunning
+    val numAgents: StateFlow<Int> = repository.numAgents
+    val agentNames: List<StateFlow<String>> = repository.agentNames
+    val agentPrompts: List<StateFlow<String>> = repository.agentPrompts
+    val agentModels: List<StateFlow<String>> = repository.agentModels
+    val apiKeysSlots: List<StateFlow<String>> = repository.apiKeys
+    val apiKeyStatuses: List<StateFlow<String>> = repository.apiKeyStatuses
+    val apiKeyUsages: List<StateFlow<Float>> = repository.apiKeyUsages
+    val activeKeyIndex: StateFlow<Int> = repository.activeKeyIndex
+    val multiAgentSessionIds: StateFlow<Set<String>> = repository.multiAgentSessionIds
+
+    val isActiveSessionMultiAgent: StateFlow<Boolean> = combine(
+        _activeSessionId,
+        multiAgentSessionIds
+    ) { activeId, multiAgentIds ->
+        activeId != null && multiAgentIds.contains(activeId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    fun setApiKeySlot(index: Int, key: String) {
+        repository.setApiKeySlot(index, key)
+    }
+
+    fun setApiKeySlotStatus(index: Int, status: String) {
+        repository.setApiKeySlotStatus(index, status)
+    }
+
+    fun setActiveKeyIndex(index: Int) {
+        repository.setActiveKeyIndex(index)
+    }
+
+    fun setNumAgents(num: Int) {
+        repository.setNumAgents(num)
+    }
+
+    fun setAgentConfig(index: Int, name: String, prompt: String, model: String) {
+        repository.setAgentConfig(index, name, prompt, model)
+    }
+
+    fun createNewMultiAgentSession() {
+        viewModelScope.launch {
+            val sessionId = repository.createNewSession("👥 Multi-Agent Room")
+            repository.markSessionAsMultiAgent(sessionId)
+            _activeSessionId.value = sessionId
+            logEvent("Created new Multi-Agent Chat Room: $sessionId")
+        }
+    }
+
     val vaultThemeColor: StateFlow<String?> = repository.vaultThemeColor
     val vaultBackgroundImageUri: StateFlow<String?> = repository.vaultBackgroundImageUri
     val vaultBgOpacity: StateFlow<Float> = repository.vaultBgOpacity
+    val multiAgentThemeColor: StateFlow<String?> = repository.multiAgentThemeColor
+    val multiAgentBackgroundImageUri: StateFlow<String?> = repository.multiAgentBackgroundImageUri
+    val multiAgentBgOpacity: StateFlow<Float> = repository.multiAgentBgOpacity
     val inputBarOpacity: StateFlow<Float> = repository.inputBarOpacity
+    val userName: StateFlow<String> = repository.userName
+    val agentNamesFlow: StateFlow<List<String>> = kotlinx.coroutines.flow.combine(repository.agentNames) { it.toList() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.agentNames.map { it.value })
+
 
     fun setThemeColor(colorHex: String?) {
         repository.setThemeColor(colorHex)
+    }
+
+    fun setUserName(name: String) {
+        repository.setUserName(name)
     }
 
     fun setBackgroundImageUri(uri: String?) {
@@ -162,6 +220,18 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun setVaultBgOpacity(opacity: Float) {
         repository.setVaultBgOpacity(opacity)
+    }
+
+    fun setMultiAgentThemeColor(colorHex: String?) {
+        repository.setMultiAgentThemeColor(colorHex)
+    }
+
+    fun setMultiAgentBackgroundImageUri(uri: String?) {
+        repository.setMultiAgentBackgroundImageUri(uri)
+    }
+
+    fun setMultiAgentBgOpacity(opacity: Float) {
+        repository.setMultiAgentBgOpacity(opacity)
     }
 
     fun setInputBarOpacity(opacity: Float) {
@@ -271,26 +341,42 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         _isGenerating.value = true
         
         logEvent("Sending message. Prompt length: ${prompt.length} (Has Image: ${imgBase64 != null})")
-        viewModelScope.launch {
+        repository.applicationScope.launch {
             try {
                 var currentId = _activeSessionId.value
+                val isMulti = isActiveSessionMultiAgent.value || (currentId != null && repository.multiAgentSessionIds.value.contains(currentId))
+                
                 if (currentId == null) {
-                    currentId = repository.createNewSession("Prompting...")
+                    if (isMulti) {
+                        currentId = repository.createNewSession("👥 Multi-Agent Room")
+                        repository.markSessionAsMultiAgent(currentId)
+                    } else {
+                        currentId = repository.createNewSession("Prompting...")
+                    }
                     _activeSessionId.value = currentId
                 }
-                logEvent("Routing request to ${if (_isOnlineMode.value) "Online Gemini" else "Offline LLM"} within session $currentId")
-                repository.sendMessageAndAwaitResponse(
-                    sessionId = currentId,
-                    promptText = prompt,
-                    isOnlineMode = _isOnlineMode.value,
-                    webSearchEnabled = _webSearchEnabled.value,
-                    apiKey = repository.apiKey.value,
-                    systemPrompt = _systemPrompt.value,
-                    imageBase64 = imgBase64,
-                    isImagenActive = _isImagenModeActive.value
-                )
-                if (_isImagenModeActive.value) {
-                    _isImagenModeActive.value = false
+                
+                if (isMulti || repository.multiAgentSessionIds.value.contains(currentId)) {
+                    logEvent("Routing to Multi-Agent pipeline within session $currentId")
+                    repository.sendMultiAgentMessageAndAwaitResponse(
+                        sessionId = currentId!!,
+                        promptText = prompt
+                    )
+                } else {
+                    logEvent("Routing request to ${if (_isOnlineMode.value) "Online Gemini" else "Offline LLM"} within session $currentId")
+                    repository.sendMessageAndAwaitResponse(
+                        sessionId = currentId!!,
+                        promptText = prompt,
+                        isOnlineMode = _isOnlineMode.value,
+                        webSearchEnabled = _webSearchEnabled.value,
+                        apiKey = repository.apiKey.value,
+                        systemPrompt = _systemPrompt.value,
+                        imageBase64 = imgBase64,
+                        isImagenActive = _isImagenModeActive.value
+                    )
+                    if (_isImagenModeActive.value) {
+                        _isImagenModeActive.value = false
+                    }
                 }
                 logEvent("Message response received and saved successfully.")
             } catch (e: Exception) {
@@ -589,6 +675,38 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
             }
         }
         return result
+    }
+
+    // Google Drive Integration State & Methods
+    val isDriveLinked: StateFlow<Boolean> = repository.isDriveLinked
+
+    fun getGoogleDriveClientId(): String = repository.googleDriveHelper.getClientId()
+    fun setGoogleDriveClientId(v: String) = repository.googleDriveHelper.setClientId(v)
+
+    fun getGoogleDriveClientSecret(): String = repository.googleDriveHelper.getClientSecret()
+    fun setGoogleDriveClientSecret(v: String) = repository.googleDriveHelper.setClientSecret(v)
+
+    fun getGoogleDriveManualToken(): String = repository.googleDriveHelper.getManualAccessToken()
+    fun setGoogleDriveManualToken(v: String) {
+        repository.googleDriveHelper.setManualAccessToken(v)
+        repository.updateDriveLinkStatus()
+        logEvent("Manual Google Drive access token set.")
+    }
+
+    fun getGoogleDriveAuthUrl(clientId: String): String = repository.googleDriveHelper.getAuthUrl(clientId)
+
+    fun unlinkGoogleDrive() {
+        repository.googleDriveHelper.unlink()
+        repository.updateDriveLinkStatus()
+        logEvent("Google Drive unlinked / signed out.")
+    }
+
+    fun exchangeGoogleDriveCode(code: String, clientId: String, secret: String, onResult: (Boolean) -> Unit) {
+        viewModelScope.launch {
+            val success = repository.googleDriveHelper.exchangeCodeForTokens(code, clientId, secret)
+            repository.updateDriveLinkStatus()
+            onResult(success)
+        }
     }
 
     class Factory(private val repository: ChatRepository) : ViewModelProvider.Factory {

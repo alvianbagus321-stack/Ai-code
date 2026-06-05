@@ -138,6 +138,26 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun handleIncomingUri(uri: android.net.Uri, viewModel: ChatViewModel) {
+        if (uri.scheme == "aistudio-drive" && uri.host == "oauth-callback") {
+            val code = uri.getQueryParameter("code")
+            if (!code.isNullOrBlank()) {
+                val clientId = viewModel.getGoogleDriveClientId()
+                val clientSecret = viewModel.getGoogleDriveClientSecret()
+                if (clientId.isNotEmpty() && clientSecret.isNotEmpty()) {
+                    viewModel.exchangeGoogleDriveCode(code, clientId, clientSecret) { success ->
+                        if (success) {
+                            viewModel.logEvent("Google Drive OAuth Berhasil! Terhubung secara resmi.")
+                        } else {
+                            viewModel.logEvent("Google Drive OAuth Gagal. Periksa kode atau kredensial.")
+                        }
+                    }
+                } else {
+                    viewModel.logEvent("Gagal autentikasi Google Drive: Client ID & Secret belum diisi.")
+                }
+            }
+            return
+        }
+
         val base64Data = uri.getQueryParameter("data")
         if (!base64Data.isNullOrBlank()) {
             try {

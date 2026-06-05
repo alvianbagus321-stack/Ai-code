@@ -326,117 +326,163 @@ class OnlineLlmEngine {
     }
 
     /**
-     * Executes the Google Imagen 3 image generation API request.
-     * Falls back to Pollinations AI locally-cached rendering if Google Imagen 3 is whitelisted/restricted.
+     * Executes the Google Gemini 2.5 Image generation or fallback Pollinations AI API request.
+     * Mode: "alternative" uses Pollinations AI directly (fully free, no API key).
+     * Mode: "imagen" uses Google Gemini 2.5 Image and falls back if there's an error.
      */
     suspend fun generateImagenResponse(
         prompt: String,
         apiKey: String,
-        context: android.content.Context
+        context: android.content.Context,
+        mode: String = "alternative"
     ): OnlineInferenceResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         var googleError: String? = null
 
-        // Attempt 1: Call Google Imagen 3 API
-        try {
-            val cleanedApiKey = apiKey.trim().removeSurrounding("\"").removeSurrounding("'")
-            if (cleanedApiKey.isNotEmpty() && cleanedApiKey.length > 5) {
-                val rootJson = JSONObject()
-                rootJson.put("prompt", prompt)
-                rootJson.put("numberOfImages", 1)
-                rootJson.put("outputMimeType", "image/jpeg")
-                rootJson.put("aspectRatio", "1:1")
+        // If user wants alternative, run it first-class (instant, 100% free)
+        if (mode == "alternative") {
+            try {
+                val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
+                // Generate a randomized seed to ensure fresh outputs on duplicate prompts
+                val randomSeed = (Math.random() * 1000000).toInt()
+                val imageUrl = "https://image.pollinations.ai/prompt/$encodedPrompt?width=1024&height=1024&nologo=true&seed=$randomSeed"
+                
+                val duration = System.currentTimeMillis() - startTime
+                val markdownResponse = "[Generated using Engine Alternatif UI]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan engine alternatif digital berkualitas tinggi gratis untuk Anda:\n\n![Generated Image]($imageUrl)"
 
-                val mediaType = "application/json; charset=utf-8".toMediaType()
-                val body = rootJson.toString().toRequestBody(mediaType)
-                val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-002:generateImages?key=$cleanedApiKey"
-
-                val request = Request.Builder()
-                    .url(endpointUrl)
-                    .post(body)
-                    .build()
-
-                client.newCall(request).execute().use { response ->
-                    val responseBodyStr = response.body?.string() ?: ""
-                    if (response.isSuccessful) {
-                        val rootObj = JSONObject(responseBodyStr)
-                        val generatedImages = rootObj.getJSONArray("generatedImages")
-                        val firstImageObj = generatedImages.getJSONObject(0)
-                        val imageObj = firstImageObj.getJSONObject("image")
-                        val base64Bytes = imageObj.getString("imageBytes")
-
-                        val cacheDir = context.cacheDir
-                        val imageFile = java.io.File(cacheDir, "imagen_${System.currentTimeMillis()}.jpg")
-                        java.io.FileOutputStream(imageFile).use { fos ->
-                            val decoded = android.util.Base64.decode(base64Bytes, android.util.Base64.DEFAULT)
-                            fos.write(decoded)
-                        }
-
-                        val duration = System.currentTimeMillis() - startTime
-                        val markdownResponse = "[Generated with Google Imagen 3]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan Google Imagen 3 untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})"
-
-                        return@withContext OnlineInferenceResult(
-                            text = markdownResponse,
-                            searchResults = emptyList(),
-                            timeMs = duration,
-                            isSuccess = true
-                        )
-                    } else {
-                        googleError = "HTTP ${response.code}: ${response.message}\n$responseBodyStr"
-                        Log.w("OnlineLlmEngine", "Google Imagen 3 API failed: $googleError")
-                    }
-                }
-            } else {
-                googleError = "API Key tidak diset atau kosong."
+                return@withContext OnlineInferenceResult(
+                    text = markdownResponse,
+                    searchResults = emptyList(),
+                    timeMs = duration,
+                    isSuccess = true
+                )
+            } catch (e: Exception) {
+                Log.e("OnlineLlmEngine", "Error forming alternative image URL", e)
             }
-        } catch (e: Exception) {
-            googleError = e.localizedMessage
-            Log.w("OnlineLlmEngine", "Error calling Google Imagen 3 REST: ${e.message}", e)
         }
 
-        // Attempt 2: Smart & Robust Fallback to Pollinations AI (locally cached)
+        // Attempt 1: Call Google Gemini 2.5 Image API
+        if (mode == "imagen") {
+            try {
+                val cleanedApiKey = apiKey.trim().removeSurrounding("\"").removeSurrounding("'")
+                if (cleanedApiKey.isNotEmpty() && cleanedApiKey.length > 5) {
+                    val rootJson = JSONObject()
+                    
+                    val partsArray = org.json.JSONArray()
+                    val partObj = JSONObject()
+                    partObj.put("text", prompt)
+                    partsArray.put(partObj)
+                    
+                    val contentObj = JSONObject()
+                    contentObj.put("parts", partsArray)
+                    
+                    val contentsArray = org.json.JSONArray()
+                    contentsArray.put(contentObj)
+                    rootJson.put("contents", contentsArray)
+
+                    val genConfig = JSONObject()
+                    val imgConfig = JSONObject()
+                    imgConfig.put("aspectRatio", "1:1")
+                    imgConfig.put("imageSize", "1K")
+                    genConfig.put("imageConfig", imgConfig)
+
+                    val modalities = org.json.JSONArray()
+                    modalities.put("TEXT")
+                    modalities.put("IMAGE")
+                    genConfig.put("responseModalities", modalities)
+                    rootJson.put("generationConfig", genConfig)
+
+                    val mediaType = "application/json; charset=utf-8".toMediaType()
+                    val body = rootJson.toString().toRequestBody(mediaType)
+                    
+                    // Call the modern developer Gemini 2.5 Image model endpoint
+                    val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent?key=$cleanedApiKey"
+
+                    val request = Request.Builder()
+                        .url(endpointUrl)
+                        .post(body)
+                        .build()
+
+                    client.newCall(request).execute().use { response ->
+                        val responseBodyStr = response.body?.string() ?: ""
+                        if (response.isSuccessful) {
+                            val rootObj = JSONObject(responseBodyStr)
+                            val candidates = rootObj.getJSONArray("candidates")
+                            val firstCandidate = candidates.getJSONObject(0)
+                            val content = firstCandidate.getJSONObject("content")
+                            val parts = content.getJSONArray("parts")
+                            
+                            var base64Bytes: String? = null
+                            for (i in 0 until parts.length()) {
+                                val p = parts.getJSONObject(i)
+                                if (p.has("inlineData")) {
+                                    val inlineData = p.getJSONObject("inlineData")
+                                    base64Bytes = inlineData.getString("data")
+                                    break
+                                }
+                            }
+
+                            if (base64Bytes != null && base64Bytes.isNotEmpty()) {
+                                val cacheDir = context.cacheDir
+                                val imageFile = java.io.File(cacheDir, "imagen_${System.currentTimeMillis()}.jpg")
+                                java.io.FileOutputStream(imageFile).use { fos ->
+                                    val decoded = android.util.Base64.decode(base64Bytes, android.util.Base64.DEFAULT)
+                                    fos.write(decoded)
+                                }
+
+                                val duration = System.currentTimeMillis() - startTime
+                                val markdownResponse = "[Generated with Google Gemini 2.5 Image]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan Google Gemini 2.5 Image untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})"
+
+                                return@withContext OnlineInferenceResult(
+                                    text = markdownResponse,
+                                    searchResults = emptyList(),
+                                    timeMs = duration,
+                                    isSuccess = true
+                                )
+                            } else {
+                                googleError = "Mendapat respons sukses dari Gemini tapi tidak ada data gambar di dalam JSON."
+                            }
+                        } else {
+                            googleError = "HTTP ${response.code}: ${response.message}\n$responseBodyStr"
+                            Log.w("OnlineLlmEngine", "Google Gemini 2.5 Image API failed: $googleError")
+                        }
+                    }
+                } else {
+                    googleError = "API Key tidak diset atau kosong."
+                }
+            } catch (e: Exception) {
+                googleError = e.localizedMessage
+                Log.w("OnlineLlmEngine", "Error calling Google Gemini 2.5 Image REST: ${e.message}", e)
+            }
+        }
+
+        // Attempt 2: Smart & Robust Fallback to Pollinations AI
         try {
             Log.i("OnlineLlmEngine", "Falling back to Pollinations AI for image generation...")
             val encodedPrompt = URLEncoder.encode(prompt, "UTF-8")
-            val fallbackUrl = "https://image.pollinations.ai/prompt/$encodedPrompt?width=1024&height=1024&nologo=true"
+            val randomSeed = (Math.random() * 1000000).toInt()
+            val fallbackUrl = "https://image.pollinations.ai/prompt/$encodedPrompt?width=1024&height=1024&nologo=true&seed=$randomSeed"
 
-            val fallbackRequest = Request.Builder()
-                .url(fallbackUrl)
-                .build()
+            val duration = System.currentTimeMillis() - startTime
+            val suffixMsg = if (googleError != null) {
+                "\n\n*(Catatan: API Key Google Gemini Anda mengembalikan error atau tidak terkonfigurasi, sehingga dialihkan ke model gratis Engine Alternatif agar tetap berfungsi: ${googleError})*"
+            } else ""
 
-            client.newCall(fallbackRequest).execute().use { response ->
-                if (response.isSuccessful) {
-                    val bytes = response.body?.bytes()
-                    if (bytes != null && bytes.isNotEmpty()) {
-                        val cacheDir = context.cacheDir
-                        val imageFile = java.io.File(cacheDir, "fallback_${System.currentTimeMillis()}.jpg")
-                        java.io.FileOutputStream(imageFile).use { fos ->
-                            fos.write(bytes)
-                        }
+            val markdownResponse = "[Generated using Engine Alternatif]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan engine alternatif berkualitas tinggi untuk Anda:\n\n![Generated Image]($fallbackUrl)$suffixMsg"
 
-                        val duration = System.currentTimeMillis() - startTime
-                        val suffixMsg = if (googleError != null) {
-                            "\n\n*(Catatan: API Key Google Imagen 3 Anda mengembalikan error, jadi saya otomatis mengalihkan ke model beresolusi tinggi alternatif gratis untuk kenyamanan Anda!)*"
-                        } else ""
-
-                        val markdownResponse = "[Generated using Engine Alternatif]\n\nTentu! Saya telah mendesain gambar \"$prompt\" menggunakan engine alternatif berkualitas tinggi untuk Anda:\n\n![Generated Image](file://${imageFile.absolutePath})$suffixMsg"
-
-                        return@withContext OnlineInferenceResult(
-                            text = markdownResponse,
-                            searchResults = emptyList(),
-                            timeMs = duration,
-                            isSuccess = true
-                        )
-                    }
-                }
-            }
+            return@withContext OnlineInferenceResult(
+                text = markdownResponse,
+                searchResults = emptyList(),
+                timeMs = duration,
+                isSuccess = true
+            )
         } catch (fe: Exception) {
             Log.e("OnlineLlmEngine", "Fallback image generation failed: ${fe.message}", fe)
         }
 
         // Entirely failed
         val duration = System.currentTimeMillis() - startTime
-        val finalErrMsg = googleError ?: "Gagal memproses gambar melalui Google Imagen maupun model alternatif."
+        val finalErrMsg = googleError ?: "Gagal memproses gambar melalui Google Gemini maupun model alternatif."
         return@withContext OnlineInferenceResult(
             text = "Gagal memproses pembuatan gambar. Silakan periksa koneksi internet Anda atau coba prompt lain.\n\nDetail Error: $finalErrMsg",
             searchResults = emptyList(),

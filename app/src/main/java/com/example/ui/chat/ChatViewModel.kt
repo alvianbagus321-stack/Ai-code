@@ -59,8 +59,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     private val _webSearchEnabled = MutableStateFlow(true)
     val webSearchEnabled: StateFlow<Boolean> = _webSearchEnabled.asStateFlow()
 
-    private val _apiKey = MutableStateFlow("")
-    val apiKey: StateFlow<String> = _apiKey.asStateFlow()
+    val apiKey: StateFlow<String> = repository.apiKey
+    val imageGenMode: StateFlow<String> = repository.imageGenMode
+
+    fun setImageGenMode(mode: String) {
+        repository.setImageGenMode(mode)
+    }
 
     private val _systemPrompt = MutableStateFlow("You are a helpful AI assistant. Answer user queries accurately and directly.")
     val systemPrompt: StateFlow<String> = _systemPrompt.asStateFlow()
@@ -253,7 +257,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     }
 
     fun updateApiKey(newKey: String) {
-        _apiKey.value = newKey
+        repository.setApiKey(newKey)
         logEvent("API Key updated (Length: ${newKey.length})")
     }
 
@@ -280,7 +284,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
                     promptText = prompt,
                     isOnlineMode = _isOnlineMode.value,
                     webSearchEnabled = _webSearchEnabled.value,
-                    apiKey = _apiKey.value,
+                    apiKey = repository.apiKey.value,
                     systemPrompt = _systemPrompt.value,
                     imageBase64 = imgBase64,
                     isImagenActive = _isImagenModeActive.value

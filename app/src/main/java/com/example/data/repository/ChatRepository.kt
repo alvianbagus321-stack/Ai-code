@@ -41,6 +41,22 @@ class ChatRepository(
     private val _inputBarOpacity = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getFloat("input_bar_opacity", 0.9f))
     val inputBarOpacity: StateFlow<Float> = _inputBarOpacity.asStateFlow()
 
+    private val _apiKey = kotlinx.coroutines.flow.MutableStateFlow<String>(sharedPrefs.getString("api_key", "") ?: "")
+    val apiKey: StateFlow<String> = _apiKey.asStateFlow()
+
+    private val _imageGenMode = kotlinx.coroutines.flow.MutableStateFlow<String>(sharedPrefs.getString("image_gen_mode", "alternative") ?: "alternative")
+    val imageGenMode: StateFlow<String> = _imageGenMode.asStateFlow()
+
+    fun setApiKey(key: String) {
+        sharedPrefs.edit().putString("api_key", key).apply()
+        _apiKey.value = key
+    }
+
+    fun setImageGenMode(mode: String) {
+        sharedPrefs.edit().putString("image_gen_mode", mode).apply()
+        _imageGenMode.value = mode
+    }
+
     fun setThemeColor(colorHex: String?) {
         sharedPrefs.edit().putString("theme_color", colorHex).apply()
         _themeColor.value = colorHex
@@ -229,7 +245,8 @@ class ChatRepository(
                 val result = onlineLlmEngine.generateImagenResponse(
                     prompt = promptText,
                     apiKey = apiKey,
-                    context = context
+                    context = context,
+                    mode = _imageGenMode.value
                 )
                 ChatMessage(
                     sessionId = sessionId,

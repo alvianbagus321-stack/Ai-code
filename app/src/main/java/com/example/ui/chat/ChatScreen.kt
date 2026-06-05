@@ -154,6 +154,7 @@ fun ChatScreen(
     }
     val apiKey by viewModel.apiKey.collectAsState()
     val systemPrompt by viewModel.systemPrompt.collectAsState()
+    val imageGenMode by viewModel.imageGenMode.collectAsState()
 
     val availableModels by viewModel.availableModels.collectAsState()
     val selectedModelName by viewModel.selectedModelName.collectAsState()
@@ -2360,6 +2361,8 @@ fun ChatScreen(
                     Spacer(modifier = Modifier.height(10.dp))
 
                     if (isOnlineMode) {
+                        val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+
                         Text(
                             text = "GEMINI FLASH API CONFIGURATION",
                             fontWeight = FontWeight.Bold,
@@ -2389,7 +2392,113 @@ fun ChatScreen(
                                 .testTag("api_key_text_field")
                         )
 
-                        Spacer(modifier = Modifier.height(10.dp))
+                        Spacer(modifier = Modifier.height(6.dp))
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF1E1B4B))
+                                .border(1.dp, Color(0xFF4F46E5), RoundedCornerShape(8.dp))
+                                .clickable { uriHandler.openUri("https://aistudio.google.com/app/apikey") }
+                                .padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text("🔑", fontSize = 16.sp, modifier = Modifier.padding(end = 8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Butuh Google API Key?",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Klik di sini untuk membuat API Key gratis di Google AI Studio (aistudio.google.com)",
+                                    color = Color(0xFFA5B4FC),
+                                    fontSize = 10.sp,
+                                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        Text(
+                            text = "MODE GENERATE GAMBAR (AI IMAGE GENERATION)",
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp,
+                            color = electricBlue,
+                            modifier = Modifier.padding(vertical = 6.dp)
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val isAltSelected = imageGenMode == "alternative"
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isAltSelected) Color(0xFF10B981).copy(alpha = 0.15f) else Color(0xFF1E293B))
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isAltSelected) Color(0xFF10B981) else Color(0xFF334155),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { viewModel.setImageGenMode("alternative") }
+                                    .padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("🚀", fontSize = 18.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Alternatif (Gratis)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = if (isAltSelected) Color(0xFF10B981) else Color.White
+                                )
+                                Text(
+                                    text = "Tanpa API Key, instan",
+                                    fontSize = 9.sp,
+                                    color = Color(0xFF94A3B8),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+
+                            val isGeminiSelected = imageGenMode == "imagen"
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(10.dp))
+                                    .background(if (isGeminiSelected) Color(0xFF3B82F6).copy(alpha = 0.15f) else Color(0xFF1E293B))
+                                    .border(
+                                        width = 1.dp,
+                                        color = if (isGeminiSelected) Color(0xFF3B82F6) else Color(0xFF334155),
+                                        shape = RoundedCornerShape(10.dp)
+                                    )
+                                    .clickable { viewModel.setImageGenMode("imagen") }
+                                    .padding(10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text("✨", fontSize = 18.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "Gemini 2.5 Image",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = if (isGeminiSelected) Color(0xFF60A5FA) else Color.White
+                                )
+                                Text(
+                                    text = "Butuh API Key Anda",
+                                    fontSize = 9.sp,
+                                    color = Color(0xFF94A3B8),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
 
                         OutlinedTextField(
                             value = systemPrompt,

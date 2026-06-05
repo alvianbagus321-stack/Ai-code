@@ -210,6 +210,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         }
     }
 
+    fun updateMessage(message: ChatMessage) {
+        viewModelScope.launch {
+            repository.updateMessage(message)
+        }
+    }
+
     fun onUserInputChange(newVal: String) {
         _currentUserInput.value = newVal
     }

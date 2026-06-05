@@ -329,7 +329,8 @@ class OfflineLlmEngine(private val context: Context) {
                         "You run securely on the user's mobile device with 100% data confidentiality. " +
                         "Identify the user's intent clearly and answer their question directly. " +
                         "CRITICAL: You MUST always reply in the exact same language the user writes in (e.g., if the user writes in Indonesian, you MUST answer in complete, natural Indonesian). " +
-                        "Never output internal system logs, processing lanes, thread statuses, or engine diagnostics in your replies."
+                        "Never output internal system logs, processing lanes, thread statuses, or engine diagnostics in your replies. " +
+                        "If the user asks you to generate, draw, paint, create, or illustrate an image, you MUST respond with a markdown image linked to Pollinations AI exactly like this: ![<description>](https://image.pollinations.ai/prompt/<detailed_url_encoded_prompt>?width=1024&height=1024&nologo=true) where you replace <detailed_url_encoded_prompt> with a url-encoded prompt in English."
                 val systemInstruction = if (systemPrompt.isNotBlank()) systemPrompt else defaultInstruction
                 
                 val modelName = selected ?: "localmodel.bin"
@@ -459,10 +460,18 @@ class OfflineLlmEngine(private val context: Context) {
                 "[DEV MODE BYPASS]: Executed command / parsed input -> $prompt"
             }
             else -> {
-                "Halo! Saya adalah Built-in Light AI (Local Sandbox). " +
-                "Model fisik belum terpasang atau gagal dimuat ($issue). " +
-                "Namun saya siap membantu tugas-tugas dasar secara offline.\n\n" +
-                "Anda berkata: \"$prompt\""
+                val isImageRequest = lowerPrompt.contains("gambar") || lowerPrompt.contains("draw") || lowerPrompt.contains("paint") || lowerPrompt.contains("generate image") || lowerPrompt.contains("lukis")
+                if (isImageRequest) {
+                    val fallbackSubject = prompt.replace(Regex("(?i)(gambar|draw|paint|generate image|lukis|buatkan|tolong)"), "").trim()
+                    val querySubject = if (fallbackSubject.isEmpty()) "futuristic digital art" else fallbackSubject
+                    val urlEncoded = java.net.URLEncoder.encode(querySubject, "UTF-8")
+                    "Tentu! Saya telah mendesain gambar \"$querySubject\" untuk Anda:\n\n![$querySubject](https://image.pollinations.ai/prompt/$urlEncoded?width=1024&height=1024&nologo=true)\n\nAnda dapat mengunduhnya secara langsung dengan tombol download di bawah!"
+                } else {
+                    "Halo! Saya adalah Built-in Light AI (Local Sandbox). " +
+                    "Model fisik belum terpasang atau gagal dimuat ($issue). " +
+                    "Namun saya siap membantu tugas-tugas dasar secara offline.\n\n" +
+                    "Anda berkata: \"$prompt\""
+                }
             }
         }
 

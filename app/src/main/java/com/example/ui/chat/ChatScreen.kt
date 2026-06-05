@@ -26,6 +26,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -1805,6 +1806,9 @@ fun ChatScreen(
                                 onMenuAction = { actionStr ->
                                     viewModel.onUserInputChange(actionStr)
                                     viewModel.sendMessage()
+                                },
+                                onEditMessage = { newContent ->
+                                    viewModel.updateMessage(message.copy(content = newContent))
                                 }
                             )
                         }
@@ -2939,9 +2943,50 @@ fun ChatBubble(
     userBubbleBg: Color,
     modelBubbleBg: Color,
     emerald: Color,
-    onMenuAction: ((String) -> Unit)? = null
+    onMenuAction: ((String) -> Unit)? = null,
+    onEditMessage: ((String) -> Unit)? = null
 ) {
     val isUser = message.role == "user"
+    var showEditDialog by remember { mutableStateOf(false) }
+    var editRawText by remember { mutableStateOf(message.content) }
+
+    if (showEditDialog) {
+        AlertDialog(
+            onDismissRequest = { showEditDialog = false },
+            title = { Text("Edit Message", color = Color.White) },
+            text = {
+                OutlinedTextField(
+                    value = editRawText,
+                    onValueChange = { editRawText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color(0xFF60A5FA),
+                        unfocusedBorderColor = Color(0xFF475569)
+                    )
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        onEditMessage?.invoke(editRawText)
+                        showEditDialog = false
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF60A5FA))
+                ) {
+                    Text("Save", color = Color.White)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showEditDialog = false }) {
+                    Text("Cancel", color = Color(0xFF94A3B8))
+                }
+            },
+            containerColor = Color(0xFF1E293B)
+        )
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -2969,6 +3014,20 @@ fun ChatBubble(
                     fontWeight = FontWeight.Bold,
                     color = Color(0xFF64748B)
                 )
+                if (isUser) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Icon(
+                        imageVector = Icons.Default.Edit,
+                        contentDescription = "Edit Message",
+                        tint = Color(0xFF64748B),
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clickable {
+                                editRawText = message.content
+                                showEditDialog = true
+                            }
+                    )
+                }
             }
             
             Box(
@@ -3106,60 +3165,345 @@ fun ChatBubble(
     }
 }
 
+sealed class MarkdownToken {
+    data class Text(val content: String) : MarkdownToken()
+    data class Image(val alt: String, val url: String) : MarkdownToken()
+    data class CodeBlock(val language: String, val code: String) : MarkdownToken()
+}
+
+fun parseMarkdown(text: String): List<MarkdownToken> {
+    val tokens = mutableListOf<MarkdownToken>()
+    var currentIndex = 0
+
+    while (currentIndex < text.length) {
+        val nextCodeStart = text.indexOf("```", currentIndex)
+        val nextImageStart = text.indexOf("![", currentIndex)
+        
+        if (nextCodeStart == -1 && nextImageStart == -1) {
+            tokens.add(MarkdownToken.Text(text.substring(currentIndex)))
+            break
+        }
+        
+        if (nextCodeStart != -1 && (nextImageStart == -1 || nextCodeStart < nextImageStart)) {
+            if (nextCodeStart > currentIndex) {
+                tokens.add(MarkdownToken.Text(text.substring(currentIndex, nextCodeStart)))
+            }
+            val codeEnd = text.indexOf("```", nextCodeStart + 3)
+            if (codeEnd != -1) {
+                val blockText = text.substring(nextCodeStart + 3, codeEnd)
+                val lines = blockText.trim('\n').split('\n', limit = 2)
+                val lang = if (lines.isNotEmpty() && lines[0].all { it.isLetterOrDigit() } && lines[0].isNotEmpty() && lines[0].length < 15) {
+                    lines[0]
+                } else {
+                    ""
+                }
+                val code = if (lang.isNotEmpty() && lines.size > 1) lines[1] else blockText
+                tokens.add(MarkdownToken.CodeBlock(lang, code))
+                currentIndex = codeEnd + 3
+            } else {
+                tokens.add(MarkdownToken.Text(text.substring(nextCodeStart)))
+                break
+            }
+        } else {
+            if (nextImageStart > currentIndex) {
+                tokens.add(MarkdownToken.Text(text.substring(currentIndex, nextImageStart)))
+            }
+            val closeBracket = text.indexOf("]", nextImageStart)
+            val openParen = if (closeBracket != -1) text.indexOf("(", closeBracket) else -1
+            val closeParen = if (openParen != -1) text.indexOf(")", openParen) else -1
+            
+            if (closeBracket != -1 && openParen == closeBracket + 1 && closeParen != -1) {
+                val alt = text.substring(nextImageStart + 2, closeBracket)
+                val url = text.substring(openParen + 1, closeParen)
+                tokens.add(MarkdownToken.Image(alt, url))
+                currentIndex = closeParen + 1
+            } else {
+                tokens.add(MarkdownToken.Text(text.substring(nextImageStart, nextImageStart + 2)))
+                currentIndex = nextImageStart + 2
+            }
+        }
+    }
+    return tokens
+}
+
+fun downloadTextFile(context: android.content.Context, fileName: String, content: String) {
+    try {
+        val resolver = context.contentResolver
+        val contentValues = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+            put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS)
+            }
+        }
+        val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+        if (uri != null) {
+            resolver.openOutputStream(uri)?.use { outputStream ->
+                outputStream.write(content.toByteArray(Charsets.UTF_8))
+            }
+            android.widget.Toast.makeText(context, "Saved file to Downloads: $fileName", android.widget.Toast.LENGTH_LONG).show()
+        } else {
+            android.widget.Toast.makeText(context, "Failed to create download file entry", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, "Error saving file: ${e.message}", android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+fun downloadImageFromUrl(context: android.content.Context, imageUrl: String, description: String, onFinished: () -> Unit) {
+    val coroutineScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
+    coroutineScope.launch {
+        try {
+            val url = java.net.URL(imageUrl)
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.doInput = true
+            connection.connect()
+            val input = connection.inputStream
+            val bitmap = android.graphics.BitmapFactory.decodeStream(input)
+            
+            if (bitmap != null) {
+                val displayName = "AI_${System.currentTimeMillis()}.jpg"
+                val resolver = context.contentResolver
+                val contentValues = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, displayName)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+                        put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_PICTURES + "/PocketAI")
+                    }
+                }
+                
+                val uri = resolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+                if (uri != null) {
+                    resolver.openOutputStream(uri)?.use { out ->
+                        bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, out)
+                    }
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Saved image to Pictures/PocketAI", android.widget.Toast.LENGTH_LONG).show()
+                        onFinished()
+                    }
+                } else {
+                    kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "Failed to initiate save", android.widget.Toast.LENGTH_SHORT).show()
+                        onFinished()
+                    }
+                }
+            } else {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    android.widget.Toast.makeText(context, "Failed to decode downloaded stream", android.widget.Toast.LENGTH_SHORT).show()
+                    onFinished()
+                }
+            }
+        } catch (e: Exception) {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Main) {
+                android.widget.Toast.makeText(context, "Download failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                onFinished()
+            }
+        }
+    }
+}
+
+@Composable
+fun RenderTextWithLinks(text: String, textColor: Color) {
+    val context = LocalContext.current
+    val regex = Regex("\\[(.*?)\\]\\(((?:https?|ftp)://[^\\s]+)\\)")
+    val matches = regex.findAll(text).toList()
+
+    if (matches.isEmpty()) {
+        Text(text = text, color = textColor, fontSize = 13.sp, lineHeight = 17.sp)
+        return
+    }
+
+    val annotatedString = androidx.compose.ui.text.buildAnnotatedString {
+        var cursor = 0
+        matches.forEach { match ->
+            val start = match.range.first
+            if (start > cursor) {
+                append(text.substring(cursor, start))
+            }
+            val title = match.groupValues[1]
+            val url = match.groupValues[2]
+            
+            val startIndex = length
+            append(title)
+            val endIndex = length
+            
+            addStyle(
+                style = androidx.compose.ui.text.SpanStyle(
+                    color = Color(0xFF60A5FA),
+                    textDecoration = androidx.compose.ui.text.style.TextDecoration.Underline,
+                    fontWeight = FontWeight.Bold
+                ),
+                start = startIndex,
+                end = endIndex
+            )
+            addStringAnnotation(
+                tag = "URL",
+                annotation = url,
+                start = startIndex,
+                end = endIndex
+            )
+            cursor = match.range.last + 1
+        }
+        if (cursor < text.length) {
+            append(text.substring(cursor))
+        }
+    }
+
+    androidx.compose.foundation.text.ClickableText(
+        text = annotatedString,
+        style = androidx.compose.ui.text.TextStyle(
+            color = textColor,
+            fontSize = 13.sp,
+            lineHeight = 17.sp
+        ),
+        onClick = { offset ->
+            annotatedString.getStringAnnotations(tag = "URL", start = offset, end = offset)
+                .firstOrNull()?.let { annotation ->
+                    try {
+                        val browserIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(annotation.item))
+                        context.startActivity(browserIntent)
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                }
+        }
+    )
+}
+
 @Composable
 fun MarkdownTextWithImages(
     text: String,
     textColor: Color,
     modifier: Modifier = Modifier
 ) {
-    val regex = Regex("!\\[(.*?)\\]\\((.*?)\\)")
-    val matches = regex.findAll(text).toList()
-
-    if (matches.isEmpty()) {
-        Text(
-            text = text,
-            color = textColor,
-            fontSize = 13.sp,
-            lineHeight = 17.sp,
-            modifier = modifier
-        )
-        return
-    }
+    val tokens = remember(text) { parseMarkdown(text) }
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        var cursor = 0
-        matches.forEach { match ->
-            val start = match.range.first
-            if (start > cursor) {
-                Text(
-                    text = text.substring(cursor, start),
-                    color = textColor,
-                    fontSize = 13.sp,
-                    lineHeight = 17.sp
-                )
+        tokens.forEach { token ->
+            when (token) {
+                is MarkdownToken.Text -> {
+                    RenderTextWithLinks(text = token.content, textColor = textColor)
+                }
+                is MarkdownToken.Image -> {
+                    val context = LocalContext.current
+                    var isDownloading by remember { mutableStateOf(false) }
+
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        coil.compose.AsyncImage(
+                            model = token.url,
+                            contentDescription = token.alt,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 280.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Fit
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        Button(
+                            onClick = {
+                                isDownloading = true
+                                downloadImageFromUrl(context, token.url, token.alt) {
+                                    isDownloading = false
+                                }
+                            },
+                            enabled = !isDownloading,
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                            shape = RoundedCornerShape(20.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share, 
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(12.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isDownloading) "Downloading..." else "Save Image (Download)",
+                                fontSize = 10.sp,
+                                color = Color.White
+                            )
+                        }
+                    }
+                }
+                is MarkdownToken.CodeBlock -> {
+                    val context = LocalContext.current
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A)),
+                        border = BorderStroke(1.dp, Color(0xFF334155))
+                    ) {
+                        Column {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(Color(0xFF1E293B))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = token.language.ifEmpty { "source code" }.uppercase(),
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                IconButton(
+                                    onClick = {
+                                        val extension = when (token.language.lowercase()) {
+                                            "python" -> "py"
+                                            "javascript", "js" -> "js"
+                                            "html" -> "html"
+                                            "css" -> "css"
+                                            "kotlin", "kt" -> "kt"
+                                            "java" -> "java"
+                                            "json" -> "json"
+                                            else -> "txt"
+                                        }
+                                        val fileName = "generated_code_${System.currentTimeMillis()}.$extension"
+                                        downloadTextFile(context, fileName, token.code)
+                                    },
+                                    modifier = Modifier.size(24.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Share,
+                                        contentDescription = "Download source",
+                                        tint = Color(0xFF60A5FA),
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            }
+                            val scrollState = androidx.compose.foundation.rememberScrollState()
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(scrollState)
+                                    .padding(12.dp)
+                            ) {
+                                Text(
+                                    text = token.code,
+                                    color = Color(0xFFE2E8F0),
+                                    fontSize = 11.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    lineHeight = 15.sp,
+                                    maxLines = Int.MAX_VALUE
+                                )
+                            }
+                        }
+                    }
+                }
             }
-            val title = match.groupValues[1]
-            val url = match.groupValues[2]
-            
-            coil.compose.AsyncImage(
-                model = url,
-                contentDescription = title,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 300.dp)
-                    .clip(RoundedCornerShape(8.dp)),
-                contentScale = androidx.compose.ui.layout.ContentScale.Fit
-            )
-            
-            cursor = match.range.last + 1
-        }
-        if (cursor < text.length) {
-            Text(
-                text = text.substring(cursor),
-                color = textColor,
-                fontSize = 13.sp,
-                lineHeight = 17.sp
-            )
         }
     }
 }

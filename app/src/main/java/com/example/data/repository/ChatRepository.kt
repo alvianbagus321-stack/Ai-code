@@ -9,13 +9,65 @@ import com.example.data.model.OfflineLlmEngine
 import com.example.data.model.OnlineLlmEngine
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
 import java.util.UUID
 
 class ChatRepository(
     private val chatDao: ChatDao,
-    private val offlineLlmEngine: OfflineLlmEngine
+    private val offlineLlmEngine: OfflineLlmEngine,
+    private val context: android.content.Context
 ) {
+    private val sharedPrefs = context.getSharedPreferences("app_theme_prefs", android.content.Context.MODE_PRIVATE)
+
+    private val _themeColor = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("theme_color", null))
+    val themeColor: StateFlow<String?> = _themeColor.asStateFlow()
+
+    private val _backgroundImageUri = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("background_uri", null))
+    val backgroundImageUri: StateFlow<String?> = _backgroundImageUri.asStateFlow()
+
+    private val _bgOpacity = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getFloat("bg_opacity", 0.5f))
+    val bgOpacity: StateFlow<Float> = _bgOpacity.asStateFlow()
+
+    private val _vaultThemeColor = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("vault_theme_color", null))
+    val vaultThemeColor: StateFlow<String?> = _vaultThemeColor.asStateFlow()
+
+    private val _vaultBackgroundImageUri = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("vault_background_uri", null))
+    val vaultBackgroundImageUri: StateFlow<String?> = _vaultBackgroundImageUri.asStateFlow()
+
+    private val _vaultBgOpacity = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getFloat("vault_bg_opacity", 0.5f))
+    val vaultBgOpacity: StateFlow<Float> = _vaultBgOpacity.asStateFlow()
+
+    fun setThemeColor(colorHex: String?) {
+        sharedPrefs.edit().putString("theme_color", colorHex).apply()
+        _themeColor.value = colorHex
+    }
+
+    fun setBackgroundImageUri(uri: String?) {
+        sharedPrefs.edit().putString("background_uri", uri).apply()
+        _backgroundImageUri.value = uri
+    }
+
+    fun setBgOpacity(opacity: Float) {
+        sharedPrefs.edit().putFloat("bg_opacity", opacity).apply()
+        _bgOpacity.value = opacity
+    }
+
+    fun setVaultThemeColor(colorHex: String?) {
+        sharedPrefs.edit().putString("vault_theme_color", colorHex).apply()
+        _vaultThemeColor.value = colorHex
+    }
+
+    fun setVaultBackgroundImageUri(uri: String?) {
+        sharedPrefs.edit().putString("vault_background_uri", uri).apply()
+        _vaultBackgroundImageUri.value = uri
+    }
+
+    fun setVaultBgOpacity(opacity: Float) {
+        sharedPrefs.edit().putFloat("vault_bg_opacity", opacity).apply()
+        _vaultBgOpacity.value = opacity
+    }
+
     private val onlineLlmEngine = OnlineLlmEngine()
 
     val allSessions: Flow<List<ChatSession>> = chatDao.getAllSessions()
@@ -200,6 +252,10 @@ class ChatRepository(
 
         // 3. Save LLM response along with diagnostics
         chatDao.insertMessage(modelMsg)
+    }
+
+    suspend fun clearSessionMessages(sessionId: String) {
+        chatDao.deleteMessagesBySessionId(sessionId)
     }
 
     suspend fun deleteSession(sessionId: String) {

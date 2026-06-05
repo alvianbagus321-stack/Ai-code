@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.foundation.BorderStroke
@@ -33,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -120,6 +122,9 @@ fun ChatScreen(
     var showDevError by remember { mutableStateOf(false) }
     var selectedDrawerTab by remember { mutableStateOf(0) }
     var showModelGuide by remember { mutableStateOf(false) }
+    var showTerminalDialog by remember { mutableStateOf(false) }
+    var terminalInput by remember { mutableStateOf("") }
+    var terminalOutput by remember { mutableStateOf("Welcome to Pocket AI Terminal (v1.0)\nType `help` for commands.") }
 
     // Launcher for file picking to load binary model file (.bin) from downloads
     val modelPickerLauncher = rememberLauncherForActivityResult(
@@ -220,6 +225,22 @@ fun ChatScreen(
         }
     )
 
+    val bgPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        uri?.let {
+            viewModel.setBackgroundImageUri(it.toString())
+        }
+    }
+
+    val vaultBgPickerLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        contract = androidx.activity.result.contract.ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        uri?.let {
+            viewModel.setVaultBackgroundImageUri(it.toString())
+        }
+    }
+
     val launchModelPickerWithPermission = {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             // Android 13+ has native individual media selectors. Document loader works fine default-isolated
@@ -234,8 +255,34 @@ fun ChatScreen(
         }
     }
 
+    val themeColorHex by viewModel.themeColor.collectAsState()
+    val backgroundImageUriStr by viewModel.backgroundImageUri.collectAsState()
+    val bgOpacityValue by viewModel.bgOpacity.collectAsState()
+
+    val vaultThemeColorHex by viewModel.vaultThemeColor.collectAsState()
+    val vaultBackgroundImageUriStr by viewModel.vaultBackgroundImageUri.collectAsState()
+    val vaultBgOpacityValue by viewModel.vaultBgOpacity.collectAsState()
+
+    val vaultCustomBgColor = try {
+        (vaultThemeColorHex?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color(0xFF0F172A)).copy(alpha = vaultBgOpacityValue)
+    } catch (e: Exception) {
+        Color(0xFF0F172A).copy(alpha = vaultBgOpacityValue)
+    }
+
+    val isVaultLight = vaultCustomBgColor.red * 0.299f + vaultCustomBgColor.green * 0.587f + vaultCustomBgColor.blue * 0.114f > 0.5f
+    val vaultTextColor = if (isVaultLight) Color.Black else Color.White
+    val vaultSubTextColor = if (isVaultLight) Color.DarkGray else Color(0xFF94A3B8)
+    val vaultSurfaceBg = if (isVaultLight) Color.Black.copy(alpha = 0.05f) else Color(0xFF1E293B)
+    val vaultDividerColor = if (isVaultLight) Color.Black.copy(alpha = 0.1f) else Color(0xFF334155)
+
+    val customBgColor = try {
+        (themeColorHex?.let { Color(android.graphics.Color.parseColor(it)) } ?: Color(0xFF0F172A)).copy(alpha = bgOpacityValue)
+    } catch (e: Exception) {
+        Color(0xFF0F172A).copy(alpha = bgOpacityValue)
+    }
+
     // Ultra-premium Color Palette
-    val darkSanctuaryBg = Color(0xFF0F172A) // Modern dark slate
+    val darkSanctuaryBg = customBgColor // Dynamic bg
     val securityEmerald = Color(0xFF10B981) // Beautiful active green
     val electricBlue = Color(0xFF3B82F6) // AI active indigo
     val cardSurfaceBg = Color(0xFF1E293B) // Balanced container tint
@@ -245,12 +292,21 @@ fun ChatScreen(
         drawerState = drawerState,
         drawerContent = {
             ModalDrawerSheet(
-                drawerContainerColor = Color(0xFF0F172A),
+                drawerContainerColor = vaultCustomBgColor,
                 modifier = Modifier.width(310.dp)
             ) {
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    if (vaultBackgroundImageUriStr != null) {
+                        coil.compose.AsyncImage(
+                            model = vaultBackgroundImageUriStr,
+                            contentDescription = "Vault Background",
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize().alpha(vaultBgOpacityValue)
+                        )
+                    }
+                    Column(
+                        modifier = Modifier.fillMaxSize()
+                    ) {
                     Spacer(modifier = Modifier.height(20.dp))
                     Row(
                         modifier = Modifier
@@ -263,7 +319,7 @@ fun ChatScreen(
                             text = "🔐 Local Vault",
                             fontSize = 18.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White
+                            color = vaultTextColor
                         )
                         IconButton(
                             onClick = {
@@ -288,7 +344,7 @@ fun ChatScreen(
                             .fillMaxWidth()
                             .padding(horizontal = 16.dp, vertical = 6.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(Color(0xFF1E293B))
+                            .background(vaultSurfaceBg)
                             .padding(4.dp)
                     ) {
                         Box(
@@ -302,7 +358,7 @@ fun ChatScreen(
                         ) {
                             Text(
                                 text = "💬 Chat History",
-                                color = if (selectedDrawerTab == 0) Color.White else Color(0xFF94A3B8),
+                                color = if (selectedDrawerTab == 0) Color.White else vaultSubTextColor,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -318,14 +374,14 @@ fun ChatScreen(
                         ) {
                             Text(
                                 text = "🧠 Cognitive Engine",
-                                color = if (selectedDrawerTab == 1) Color.White else Color(0xFF94A3B8),
+                                color = if (selectedDrawerTab == 1) Color.White else vaultSubTextColor,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
                     }
 
-                    Divider(color = Color(0xFF334155), modifier = Modifier.padding(vertical = 4.dp))
+                    Divider(color = vaultDividerColor, modifier = Modifier.padding(vertical = 4.dp))
 
                     if (selectedDrawerTab == 0) {
                         var showImportDialog by remember { mutableStateOf(false) }
@@ -334,8 +390,8 @@ fun ChatScreen(
                                 .fillMaxWidth()
                                 .padding(horizontal = 16.dp, vertical = 6.dp)
                                 .clickable { showImportDialog = true },
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
-                            border = BorderStroke(1.dp, Color(0xFF334155)),
+                            colors = CardDefaults.cardColors(containerColor = vaultSurfaceBg),
+                            border = BorderStroke(1.dp, vaultDividerColor),
                             shape = RoundedCornerShape(12.dp)
                         ) {
                             Row(
@@ -354,13 +410,13 @@ fun ChatScreen(
                                 Column {
                                     Text(
                                         text = "Import Shared Chat",
-                                        color = Color.White,
+                                        color = vaultTextColor,
                                         fontSize = 13.sp,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
                                         text = "Paste link or JSON code to view",
-                                        color = Color(0xFF94A3B8),
+                                        color = vaultSubTextColor,
                                         fontSize = 11.sp
                                     )
                                 }
@@ -425,7 +481,7 @@ fun ChatScreen(
                                         Text("Cancel")
                                     }
                                 },
-                                containerColor = Color(0xFF0F172A)
+                                containerColor = vaultSurfaceBg
                             )
                         }
 
@@ -444,7 +500,7 @@ fun ChatScreen(
                                 Text(
                                     text = "No saved vaults yet.\nTap + above to begin.",
                                     textAlign = TextAlign.Center,
-                                    color = Color(0xFF94A3B8),
+                                    color = vaultSubTextColor,
                                     fontSize = 14.sp
                                 )
                             }
@@ -475,13 +531,13 @@ fun ChatScreen(
                                         Icon(
                                             imageVector = Icons.Default.Face,
                                             contentDescription = null,
-                                            tint = if (isActive) electricBlue else Color(0xFF64748B),
+                                            tint = if (isActive) electricBlue else vaultSubTextColor,
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(12.dp))
                                         Text(
                                             text = session.title,
-                                            color = if (isActive) Color.White else Color(0xFFE2E8F0),
+                                            color = vaultTextColor,
                                             fontSize = 14.sp,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -509,7 +565,7 @@ fun ChatScreen(
                                 .weight(1f)
                                 .fillMaxWidth()
                                 .verticalScroll(rememberScrollState())
-                                .background(Color(0xFF0F172A))
+                                .background(Color.Transparent)
                                 .padding(16.dp)
                         ) {
                         Text(
@@ -527,7 +583,7 @@ fun ChatScreen(
                                     .fillMaxWidth()
                                     .padding(bottom = 12.dp)
                                     .border(1.dp, Color(0xFFA7F3D0).copy(alpha = 0.5f), RoundedCornerShape(10.dp)),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                                colors = CardDefaults.cardColors(containerColor = vaultSurfaceBg),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
@@ -681,7 +737,7 @@ fun ChatScreen(
                         if (availableModels.isEmpty()) {
                             Card(
                                 modifier = Modifier.fillMaxWidth(),
-                                colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B)),
+                                colors = CardDefaults.cardColors(containerColor = vaultSurfaceBg),
                                 shape = RoundedCornerShape(10.dp)
                             ) {
                                 Column(
@@ -691,7 +747,7 @@ fun ChatScreen(
                                     Text(
                                         text = "No models in Sandbox storage.",
                                         fontSize = 12.sp,
-                                        color = Color(0xFF94A3B8),
+                                        color = vaultSubTextColor,
                                         textAlign = TextAlign.Center
                                     )
                                     Spacer(modifier = Modifier.height(8.dp))
@@ -716,8 +772,8 @@ fun ChatScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clip(RoundedCornerShape(10.dp))
-                                    .background(Color(0xFF1E293B))
-                                    .border(1.dp, Color(0xFF334155), RoundedCornerShape(10.dp))
+                                    .background(vaultSurfaceBg)
+                                    .border(1.dp, vaultDividerColor, RoundedCornerShape(10.dp))
                                     .padding(8.dp)
                             ) {
                                 Row(
@@ -779,7 +835,7 @@ fun ChatScreen(
                                                 Text(
                                                     text = model,
                                                     fontSize = 11.sp,
-                                                    color = if (isCurrent) Color.White else Color(0xFF94A3B8),
+                                                    color = if (isCurrent) Color.White else vaultSubTextColor,
                                                     fontFamily = FontFamily.Monospace,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
@@ -787,7 +843,7 @@ fun ChatScreen(
                                                 Text(
                                                     text = modelSizeStr,
                                                     fontSize = 9.sp,
-                                                    color = Color(0xFF64748B)
+                                                    color = vaultSubTextColor
                                                 )
                                             }
                                             if (isCurrent) {
@@ -820,7 +876,7 @@ fun ChatScreen(
                                     ) {
                                         Button(
                                             onClick = { launchModelPickerWithPermission() },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                            colors = ButtonDefaults.buttonColors(containerColor = vaultDividerColor),
                                             modifier = Modifier.weight(1f).height(32.dp).testTag("drawer_sideload_btn"),
                                             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
                                             shape = RoundedCornerShape(6.dp)
@@ -862,7 +918,7 @@ fun ChatScreen(
                             text = "📡 PRESET ENGRAM DOWNLOADS",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF64748B),
+                            color = vaultSubTextColor,
                             modifier = Modifier.padding(bottom = 6.dp)
                         )
                         
@@ -878,10 +934,10 @@ fun ChatScreen(
                                     .fillMaxWidth()
                                     .padding(vertical = 3.dp)
                                     .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFF1E293B))
+                                    .background(vaultSurfaceBg)
                                     .border(
                                         width = 1.dp,
-                                        color = if (alreadyInstalled) Color.Transparent else Color(0xFF334155),
+                                        color = if (alreadyInstalled) Color.Transparent else vaultDividerColor,
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                     .padding(horizontal = 10.dp, vertical = 8.dp),
@@ -892,12 +948,12 @@ fun ChatScreen(
                                         text = name,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (alreadyInstalled) securityEmerald else Color.White
+                                        color = if (alreadyInstalled) securityEmerald else vaultTextColor
                                     )
                                     Text(
                                         text = if (alreadyInstalled) "Installed & Ready" else "Tap to auto-pull down",
                                         fontSize = 9.sp,
-                                        color = Color(0xFF94A3B8)
+                                        color = vaultSubTextColor
                                     )
                                     if (name.contains("GPU")) {
                                         Spacer(modifier = Modifier.height(3.dp))
@@ -925,7 +981,7 @@ fun ChatScreen(
                                         Icon(
                                             imageVector = Icons.Default.ArrowDropDown,
                                             contentDescription = "Download model",
-                                            tint = if (downloadingModelName == null) electricBlue else Color(0xFF64748B),
+                                            tint = if (downloadingModelName == null) electricBlue else vaultSubTextColor,
                                             modifier = Modifier.size(18.dp)
                                         )
                                     }
@@ -938,7 +994,7 @@ fun ChatScreen(
                             text = "🔗 PULL CUSTOM ENGRAM LINK",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF64748B),
+                            color = vaultSubTextColor,
                             modifier = Modifier.padding(bottom = 6.dp)
                         )
                         
@@ -949,13 +1005,13 @@ fun ChatScreen(
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = electricBlue,
-                                unfocusedBorderColor = Color(0xFF334155),
+                                unfocusedBorderColor = vaultDividerColor,
                                 focusedLabelColor = electricBlue,
-                                unfocusedLabelColor = Color(0xFF64748B),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedContainerColor = Color(0xFF1E293B),
-                                unfocusedContainerColor = Color(0xFF1E293B)
+                                unfocusedLabelColor = vaultSubTextColor,
+                                focusedTextColor = vaultTextColor,
+                                unfocusedTextColor = vaultTextColor,
+                                focusedContainerColor = vaultSurfaceBg,
+                                unfocusedContainerColor = vaultSurfaceBg
                             ),
                             modifier = Modifier.fillMaxWidth().height(48.dp)
                         )
@@ -967,13 +1023,13 @@ fun ChatScreen(
                             singleLine = true,
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = electricBlue,
-                                unfocusedBorderColor = Color(0xFF334155),
+                                unfocusedBorderColor = vaultDividerColor,
                                 focusedLabelColor = electricBlue,
-                                unfocusedLabelColor = Color(0xFF64748B),
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White,
-                                focusedContainerColor = Color(0xFF1E293B),
-                                unfocusedContainerColor = Color(0xFF1E293B)
+                                unfocusedLabelColor = vaultSubTextColor,
+                                focusedTextColor = vaultTextColor,
+                                unfocusedTextColor = vaultTextColor,
+                                focusedContainerColor = vaultSurfaceBg,
+                                unfocusedContainerColor = vaultSurfaceBg
                             ),
                             modifier = Modifier.fillMaxWidth().height(48.dp)
                         )
@@ -1022,7 +1078,7 @@ fun ChatScreen(
                                     color = Color(0xFF047857).copy(alpha = 0.6f),
                                     shape = RoundedCornerShape(10.dp)
                                 ),
-                            colors = CardDefaults.cardColors(containerColor = Color(0xFF111827)),
+                            colors = CardDefaults.cardColors(containerColor = vaultSurfaceBg),
                             shape = RoundedCornerShape(10.dp)
                         ) {
                             Column(modifier = Modifier.padding(12.dp)) {
@@ -1036,7 +1092,7 @@ fun ChatScreen(
                                 Text(
                                     text = "Dedicated engine for loading quantized GGUF format variables natively.",
                                     fontSize = 9.sp,
-                                    color = Color(0xFF94A3B8)
+                                    color = vaultSubTextColor
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
 
@@ -1052,10 +1108,10 @@ fun ChatScreen(
                                             .fillMaxWidth()
                                             .padding(vertical = 3.dp)
                                             .clip(RoundedCornerShape(8.dp))
-                                            .background(Color(0xFF1E293B))
+                                            .background(vaultSurfaceBg)
                                             .border(
                                                 width = 1.dp,
-                                                color = if (alreadyInstalled) Color.Transparent else Color(0xFF334155),
+                                                color = if (alreadyInstalled) Color.Transparent else vaultDividerColor,
                                                 shape = RoundedCornerShape(8.dp)
                                             )
                                             .padding(horizontal = 8.dp, vertical = 6.dp),
@@ -1066,12 +1122,12 @@ fun ChatScreen(
                                                 text = name,
                                                 fontSize = 10.sp,
                                                 fontWeight = FontWeight.Bold,
-                                                color = if (alreadyInstalled) securityEmerald else Color.White
+                                                color = if (alreadyInstalled) securityEmerald else vaultTextColor
                                             )
                                             Text(
                                                 text = if (alreadyInstalled) "Installed & Loaded" else "Tap download icon to auto-fetch GGUF",
                                                 fontSize = 8.sp,
-                                                color = Color(0xFF94A3B8)
+                                                color = vaultSubTextColor
                                             )
                                         }
                                         if (alreadyInstalled) {
@@ -1182,7 +1238,7 @@ fun ChatScreen(
 
                         Spacer(modifier = Modifier.height(10.dp))
                         
-                        // Separate Import Buttons
+                                // Separate Import Buttons
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
                                 onClick = { launchModelPickerWithPermission() },
@@ -1204,6 +1260,19 @@ fun ChatScreen(
                             ) {
                                 Text("Import .gguf", fontSize = 11.sp, maxLines = 1)
                             }
+                        }
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        
+                        Button(
+                            onClick = { showTerminalDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Black),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, Color.Green),
+                            modifier = Modifier.fillMaxWidth().height(36.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Text("> Open Embedded Terminal (Termux UI)", fontSize = 11.sp, color = Color.Green, fontFamily = FontFamily.Monospace)
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -1427,6 +1496,7 @@ fun ChatScreen(
                             }
                         }
                     }
+                    } // End of Box
                 }
             }
         }
@@ -1489,6 +1559,17 @@ fun ChatScreen(
                     },
                     actions = {
                         IconButton(
+                            onClick = { viewModel.clearCurrentSession() },
+                            modifier = Modifier.testTag("clear_chat_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Clear Chat",
+                                tint = Color(0xFF94A3B8)
+                            )
+                        }
+
+                        IconButton(
                             onClick = { viewModel.toggleOnlineMode() },
                             modifier = Modifier.testTag("toggle_online_btn")
                         ) {
@@ -1535,6 +1616,15 @@ fun ChatScreen(
                         )
                     }
             ) {
+                if (backgroundImageUriStr != null) {
+                    coil.compose.AsyncImage(
+                        model = backgroundImageUriStr,
+                        contentDescription = "Background",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize().alpha(bgOpacityValue)
+                    )
+                }
+
                 if (messages.isEmpty()) {
                     // Elevated, gorgeous empty state welcoming the user
                     Column(
@@ -1878,6 +1968,101 @@ fun ChatScreen(
         }
     }
 
+    if (showTerminalDialog) {
+        val ggufProg by viewModel.ggufDownloadProgress.collectAsState()
+        val modProg by viewModel.downloadProgress.collectAsState()
+        
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { showTerminalDialog = false },
+            properties = androidx.compose.ui.window.DialogProperties(
+                decorFitsSystemWindows = false,
+                usePlatformDefaultWidth = false
+            )
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .imePadding()
+                    .height(400.dp),
+                shape = RoundedCornerShape(4.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.Black)
+            ) {
+                Column(modifier = Modifier.fillMaxSize().padding(8.dp)) {
+                    Text(
+                        text = "terminal@localhost:~#",
+                        color = Color.Green,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp
+                    )
+                    Divider(color = Color.DarkGray, modifier = Modifier.padding(vertical = 4.dp))
+                    
+                    if (ggufProg != null) {
+                        Text("GGUF Downloading: " + (ggufProg!! * 100f).toInt() + "%", color = Color.Yellow, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+                    if (modProg != null) {
+                        Text("BIN Downloading: " + (modProg!! * 100f).toInt() + "%", color = Color.Yellow, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+
+                    val scrollState = rememberScrollState()
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth().verticalScroll(scrollState)) {
+                        Text(
+                            text = terminalOutput,
+                            color = Color.Green,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp
+                        )
+                    }
+
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("$", color = Color.Green, fontFamily = FontFamily.Monospace, modifier = Modifier.padding(end = 4.dp))
+                        BasicTextField(
+                            value = terminalInput,
+                            onValueChange = { terminalInput = it },
+                            textStyle = androidx.compose.ui.text.TextStyle(color = Color.Green, fontFamily = FontFamily.Monospace, fontSize = 12.sp),
+                            cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.Green),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(
+                                onSend = {
+                                    val cmd = terminalInput.trim()
+                                    terminalInput = ""
+                                    terminalOutput += "\n$ $cmd"
+                                    
+                                    if (cmd.startsWith("curl") || cmd.startsWith("wget")) {
+                                        val urlRegex = "(https?://[^\\s]+)".toRegex()
+                                        val url = urlRegex.find(cmd)?.value
+                                        
+                                        if (url != null) {
+                                            val filename = url.substringAfterLast("/")
+                                            terminalOutput += "\n[Download Manager] Detected URL: $url\nDownloading to: $filename..."
+                                            
+                                            if (filename.lowercase().endsWith(".gguf")) {
+                                                viewModel.downloadGgufModel(url, filename)
+                                            } else {
+                                                viewModel.downloadModel(url, filename)
+                                            }
+                                        } else {
+                                            terminalOutput += "\nError: Invalid URL in command"
+                                        }
+                                    } else if (cmd == "help") {
+                                        terminalOutput += "\nAvailable commands:\n- curl <url> : Download model binary (.bin/.gguf)\n- wget <url> : Download model binary (.bin/.gguf)\n- clear : Clear terminal\n- exit : Close terminal"
+                                    } else if (cmd == "clear") {
+                                        terminalOutput = "Terminal cleared."
+                                    } else if (cmd == "exit") {
+                                        showTerminalDialog = false
+                                    } else if (cmd.isNotBlank()) {
+                                        terminalOutput += "\nbash: $cmd: command not found (Try 'curl <url>' instead)"
+                                    }
+                                }
+                            ),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+
     if (showSettingsDialog) {
         AlertDialog(
             onDismissRequest = { showSettingsDialog = false },
@@ -1891,7 +2076,7 @@ fun ChatScreen(
                 )
             },
             text = {
-                Column(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                     Text(
                         text = "Toggle between high-privacy local execution or real-time internet searches with Gemini Flash.",
                         color = Color(0xFF94A3B8),
@@ -2249,6 +2434,150 @@ fun ChatScreen(
                         }
                     }
 
+                    val baseColors = listOf(
+                        null to "Dark Slate",
+                        "#000000" to "Pure Black",
+                        "#FFFFFF" to "Pure White",
+                        "#F1F5F9" to "Slate Light",
+                        "#FEF3C7" to "Warm Sun",
+                        "#0A192F" to "Midnight Blue",
+                        "#064E3B" to "Forest Emerald",
+                        "#2E1065" to "Deep Purple",
+                        "#3F3F46" to "Stone Gray",
+                        "#450A0A" to "Crimson Dark",
+                        "#172554" to "Ocean Void"
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "MAIN UI CUSTOMIZATION",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFFA78BFA),
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            baseColors.forEach { (hex, name) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(if (themeColorHex == hex) Color(0xFF334155) else Color.Transparent)
+                                        .clickable { viewModel.setThemeColor(hex) }
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(modifier = Modifier.size(16.dp).clip(CircleShape).border(1.dp, Color.Gray, CircleShape).background(if (hex != null) Color(android.graphics.Color.parseColor(hex)) else Color(0xFF0F172A)))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(name, fontSize = 11.sp, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { bgPickerLauncher.launch("image/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF475569)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Set Custom Background", fontSize = 11.sp, color = Color.White, maxLines = 1)
+                        }
+
+                        if (backgroundImageUriStr != null) {
+                            IconButton(onClick = { viewModel.setBackgroundImageUri(null) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Clear bg", tint = Color.LightGray)
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Background Opacity:", color = Color.White, fontSize = 11.sp)
+                    androidx.compose.material3.Slider(
+                        value = bgOpacityValue,
+                        onValueChange = { viewModel.setBgOpacity(it) },
+                        valueRange = 0f..1f,
+                        colors = androidx.compose.material3.SliderDefaults.colors(
+                            thumbColor = electricBlue,
+                            activeTrackColor = electricBlue
+                        )
+                    )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Text(
+                        text = "VAULT UI CUSTOMIZATION",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 11.sp,
+                        color = Color(0xFFF472B6),
+                        modifier = Modifier.padding(vertical = 6.dp)
+                    )
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            baseColors.forEach { (hex, name) ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(if (vaultThemeColorHex == hex) Color(0xFF334155) else Color.Transparent)
+                                        .clickable { viewModel.setVaultThemeColor(hex) }
+                                        .padding(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Box(modifier = Modifier.size(16.dp).clip(CircleShape).border(1.dp, Color.Gray, CircleShape).background(if (hex != null) Color(android.graphics.Color.parseColor(hex)) else Color(0xFF0F172A)))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(name, fontSize = 11.sp, color = Color.White)
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { vaultBgPickerLauncher.launch("image/*") },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF475569)),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Set Vault Background", fontSize = 11.sp, color = Color.White, maxLines = 1)
+                        }
+
+                        if (vaultBackgroundImageUriStr != null) {
+                            IconButton(onClick = { viewModel.setVaultBackgroundImageUri(null) }) {
+                                Icon(Icons.Default.Delete, contentDescription = "Clear bg", tint = Color.LightGray)
+                            }
+                        }
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text("Vault Background Opacity:", color = Color.White, fontSize = 11.sp)
+                    androidx.compose.material3.Slider(
+                        value = vaultBgOpacityValue,
+                        onValueChange = { viewModel.setVaultBgOpacity(it) },
+                        valueRange = 0f..1f,
+                        colors = androidx.compose.material3.SliderDefaults.colors(
+                            thumbColor = electricBlue,
+                            activeTrackColor = electricBlue
+                        )
+                    )
+
                     Spacer(modifier = Modifier.height(16.dp))
                     
                     Text(
@@ -2336,6 +2665,8 @@ fun ChatScreen(
                             )
                         }
                     }
+                    
+                    Spacer(modifier = Modifier.height(48.dp))
                 }
             },
             confirmButton = {

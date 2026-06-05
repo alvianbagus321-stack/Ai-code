@@ -204,13 +204,13 @@ class LlamaCppEngine(private val context: Context) {
         else {
             val capitalizedPrompt = trimmedPrompt.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() }
             if (isIndonesian) {
-                "Saya memahami pertanyaan Anda mengenai: \"$capitalizedPrompt\".\n\n" +
-                "Sebagai model AI luring SmolLM2 yang berjalan dalam mode Sandbox, saya siap membantu memproses analisis teks ini secara langsung tanpa internet. " +
-                "Silakan ajukan pertanyaan yang lebih spesifik (misalnya meminta kode Kotlin, melakukan perhitungan angka, atau instruksi bantuan lainnya) agar saya dapat menghasilkan respons terisolasi yang tepat!"
+                "⚠️ **(Mode Simulasi GGUF Aktif)** ⚠️\n\nSaya mendeteksi pertanyaan Anda mengenai: \"$capitalizedPrompt\".\n\n" +
+                "Namun, karena library C++ bawaan (`libllama.so`) tidak di-compile (dikompilasi) di dalam build aplikasi saat ini, model GGUF fisik Anda tidak bisa berjalan secara *native*. " +
+                "Saya merespons menggunakan mesin *fallback interpreter*.\n\nJika ini adalah aplikasi khusus (custom build), pastikan Anda menambahkan NDK C++ ke dalam project Anda."
             } else {
-                "Regarding your inquiry about \"$capitalizedPrompt\":\n\n" +
-                "As an offline-first SmolLM2 assistant powered by the local llama.cpp sandbox, I can process this content completely in device isolation. " +
-                "Please provide any specific requirements—such as writing a piece of code, performing calculations, or refining paragraphs—and I will instantly compute the results on your processor!"
+                "⚠️ **(GGUF Simulation Mode Active)** ⚠️\n\nRegarding your inquiry about \"$capitalizedPrompt\":\n\n" +
+                "Because the native C++ library (`libllama.so`) was not compiled in this app build, your physical GGUF model cannot run natively. " +
+                "I am responding using the pre-programmed sandbox fallback interpreter.\n\nIf this is a custom build, please ensure you link the C++ NDK to instantiate the actual model."
             }
         }
 

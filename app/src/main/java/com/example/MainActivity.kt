@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
         // 1. Initialize complete offline database, engine, and repository
         val database = ChatDatabase.getDatabase(applicationContext)
         val llmEngine = OfflineLlmEngine(applicationContext)
-        val repository = ChatRepository(database.chatDao(), llmEngine)
+        val repository = ChatRepository(database.chatDao(), llmEngine, applicationContext)
         
         // 2. Instantiate stateful viewmodel
         val viewModel = ViewModelProvider(
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         val database = ChatDatabase.getDatabase(applicationContext)
         val llmEngine = OfflineLlmEngine(applicationContext)
-        val repository = ChatRepository(database.chatDao(), llmEngine)
+        val repository = ChatRepository(database.chatDao(), llmEngine, applicationContext)
         val viewModel = ViewModelProvider(this, ChatViewModel.Factory(repository))[ChatViewModel::class.java]
         intent.data?.let { handleIncomingUri(it, viewModel) }
     }

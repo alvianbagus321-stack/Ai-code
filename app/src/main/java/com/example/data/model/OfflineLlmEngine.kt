@@ -327,8 +327,8 @@ class OfflineLlmEngine(private val context: Context) {
                 // Incorporate the prompt template wrapper to enforce strict role separation and prevent log leaks.
                 val defaultInstruction = "You are a professional, extremely helpful offline-first Assistant. " +
                         "You run securely on the user's mobile device with 100% data confidentiality. " +
-                        "Identify the user's intent clearly and answer their question directly, " +
-                        "providing accurate mathematical calculations or logical summaries where requested. " +
+                        "Identify the user's intent clearly and answer their question directly. " +
+                        "CRITICAL: You MUST always reply in the exact same language the user writes in (e.g., if the user writes in Indonesian, you MUST answer in complete, natural Indonesian). " +
                         "Never output internal system logs, processing lanes, thread statuses, or engine diagnostics in your replies."
                 val systemInstruction = if (systemPrompt.isNotBlank()) systemPrompt else defaultInstruction
                 
@@ -343,7 +343,10 @@ class OfflineLlmEngine(private val context: Context) {
                     Log.d(TAG, "[DEV MODE BYPASS] Sending raw prompt")
                     prompt
                 } else {
-                    PromptTemplateWrapper.wrap(systemInstruction, prompt, formatType)
+                    val promptToUse = if (prompt.lowercase(Locale.getDefault()).contains("bahasa indonesia") || prompt.lowercase(Locale.getDefault()).contains("indonesia")) {
+                        "$prompt\n\n(IMPORTANT INSTRUCTION: You MUST reply entirely in BAHASA INDONESIA, regardless of any other conditions. DO NOT use English.)"
+                    } else prompt
+                    PromptTemplateWrapper.wrap(systemInstruction, promptToUse, formatType)
                 }
                 Log.d(TAG, "Executing on-device query using wrapped prompt: $formattedPrompt")
                 

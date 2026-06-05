@@ -106,6 +106,39 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val ggufDownloadError: StateFlow<String?> = repository.ggufDownloadError
 
     val devModeEnabled: StateFlow<Boolean> = repository.devModeEnabled
+    
+    val themeColor: StateFlow<String?> = repository.themeColor
+    val backgroundImageUri: StateFlow<String?> = repository.backgroundImageUri
+    val bgOpacity: StateFlow<Float> = repository.bgOpacity
+
+    val vaultThemeColor: StateFlow<String?> = repository.vaultThemeColor
+    val vaultBackgroundImageUri: StateFlow<String?> = repository.vaultBackgroundImageUri
+    val vaultBgOpacity: StateFlow<Float> = repository.vaultBgOpacity
+
+    fun setThemeColor(colorHex: String?) {
+        repository.setThemeColor(colorHex)
+    }
+
+    fun setBackgroundImageUri(uri: String?) {
+        repository.setBackgroundImageUri(uri)
+    }
+
+    fun setBgOpacity(opacity: Float) {
+        repository.setBgOpacity(opacity)
+    }
+
+    fun setVaultThemeColor(colorHex: String?) {
+        repository.setVaultThemeColor(colorHex)
+    }
+
+    fun setVaultBackgroundImageUri(uri: String?) {
+        repository.setVaultBackgroundImageUri(uri)
+    }
+
+    fun setVaultBgOpacity(opacity: Float) {
+        repository.setVaultBgOpacity(opacity)
+    }
+
     fun attemptEnableDevMode(password: String): Boolean = repository.attemptEnableDevMode(password)
     fun disableDevMode() = repository.disableDevMode()
 
@@ -151,6 +184,15 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun selectSession(sessionId: String) {
         _activeSessionId.value = sessionId
+    }
+
+    fun clearCurrentSession() {
+        val sessionId = _activeSessionId.value
+        if (sessionId != null) {
+            viewModelScope.launch {
+                repository.clearSessionMessages(sessionId)
+            }
+        }
     }
 
     fun deleteSession(sessionId: String) {

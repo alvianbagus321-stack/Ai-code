@@ -2,6 +2,8 @@ package com.example.data.repository
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.Headers
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
@@ -162,9 +164,11 @@ class GoogleDriveHelper(private val context: Context) {
         return if (curToken.isNotEmpty()) curToken else null
     }
 
-    suspend fun searchFile(name: String, accessToken: String): String? {
+    suspend fun searchFile(name: String, accessToken: String, parentId: String? = null): String? {
         try {
-            val query = URLEncoder.encode("name = '$name' and trashed = false", "UTF-8")
+            var q = "name = '$name' and trashed = false"
+            if (parentId != null) q += " and '$parentId' in parents"
+            val query = URLEncoder.encode(q, "UTF-8")
             val url = "https://www.googleapis.com/drive/v3/files?q=$query&fields=files(id,name)"
 
             val request = Request.Builder()
@@ -214,10 +218,13 @@ class GoogleDriveHelper(private val context: Context) {
         return null
     }
 
-    suspend fun createNewFile(name: String, content: String, accessToken: String): Boolean {
+    suspend fun createNewFile(name: String, content: String, accessToken: String, parentId: String? = null): Boolean {
         try {
             val metadata = JSONObject()
             metadata.put("name", name)
+            if (parentId != null) {
+                metadata.put("parents", org.json.JSONArray().put(parentId))
+            }
 
             val mimeType = URLConnection.guessContentTypeFromName(name) ?: "text/plain"
 
@@ -277,13 +284,64 @@ class GoogleDriveHelper(private val context: Context) {
         return false
     }
 
-    suspend fun syncFileToDrive(name: String, content: String): Boolean {
+    suspend fun searchOrCreateFolder(name: String, accessToken: String, parentId: String? = null): String? {
+        try {
+            var q = "name = '$name' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            if (parentId != null) q += " and '$parentId' in parents"
+            val query = URLEncoder.encode(q, "UTF-8")
+            val url = "https://www.googleapis.com/drive/v3/files?q=$query&fields=files(id)"
+            
+            val request = Request.Builder().url(url).header("Authorization", "Bearer $accessToken").get().build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: ""
+                    val json = org.json.JSONObject(bodyStr)
+                    val files = json.optJSONArray("files")
+                    if (files != null && files.length() > 0) {
+                        return files.getJSONObject(0).optString("id", null)
+                    }
+                }
+            }
+            
+            val metadata = org.json.JSONObject()
+            metadata.put("name", name)
+            metadata.put("mimeType", "application/vnd.google-apps.folder")
+            if (parentId != null) {
+                metadata.put("parents", org.json.JSONArray().put(parentId))
+            }
+            
+            val createReq = Request.Builder()
+                .url("https://www.googleapis.com/drive/v3/files")
+                .header("Authorization", "Bearer $accessToken")
+                .header("Content-Type", "application/json")
+                .post(metadata.toString().toRequestBody("application/json".toMediaTypeOrNull()))
+                .build()
+                
+            client.newCall(createReq).execute().use { response ->
+                if (response.isSuccessful) {
+                    val bodyStr = response.body?.string() ?: ""
+                    val json = org.json.JSONObject(bodyStr)
+                    return json.optString("id", null)
+                }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+        return null
+    }
+
+    suspend fun syncFileToDrive(name: String, content: String, dirName: String? = null): Boolean {
         val accessToken = ensureValidAccessToken() ?: return false
-        val existingId = searchFile(name, accessToken)
+        var parentId: String? = null
+        if (!dirName.isNullOrBlank()) {
+            val parts = dirName.split("/").filter { it.isNotBlank() }
+            for (part in parts) {
+                parentId = searchOrCreateFolder(part, accessToken, parentId) ?: return false
+            }
+        }
+        val existingId = searchFile(name, accessToken, parentId)
         return if (existingId != null) {
             updateExistingFile(existingId, content, accessToken)
         } else {
-            createNewFile(name, content, accessToken)
+            createNewFile(name, content, accessToken, parentId)
         }
     }
 
@@ -291,5 +349,95 @@ class GoogleDriveHelper(private val context: Context) {
         val accessToken = ensureValidAccessToken() ?: return null
         val existingId = searchFile(name, accessToken) ?: return null
         return downloadFileContent(existingId, accessToken)
+    }
+
+    suspend fun listFiles(): List<String> = withContext(Dispatchers.IO) {
+        val accessToken = ensureValidAccessToken() ?: return@withContext emptyList()
+        try {
+            val url = "https://www.googleapis.com/drive/v3/files?q=trashed=false&fields=files(name)"
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $accessToken")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (response.isSuccessful) {
+                    val root = org.json.JSONObject(response.body?.string() ?: "")
+                    val files = root.optJSONArray("files") ?: org.json.JSONArray()
+                    val list = mutableListOf<String>()
+                    for (i in 0 until files.length()) {
+                        list.add(files.getJSONObject(i).getString("name"))
+                    }
+                    return@withContext list
+                }
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+        emptyList()
+    }
+
+    suspend fun deleteFile(name: String): Boolean = withContext(Dispatchers.IO) {
+        val accessToken = ensureValidAccessToken() ?: return@withContext false
+        val existingId = searchFile(name, accessToken) ?: return@withContext false
+        try {
+            val url = "https://www.googleapis.com/drive/v3/files/$existingId"
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $accessToken")
+                .delete()
+                .build()
+            client.newCall(request).execute().use { response ->
+                return@withContext response.isSuccessful
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+        false
+    }
+
+    suspend fun moveFile(name: String, dirName: String): Boolean = withContext(Dispatchers.IO) {
+        val accessToken = ensureValidAccessToken() ?: return@withContext false
+        val fileId = searchFile(name, accessToken) ?: return@withContext false
+        
+        try {
+            var previousParents = ""
+            val getReq = Request.Builder().url("https://www.googleapis.com/drive/v3/files/$fileId?fields=parents").header("Authorization", "Bearer $accessToken").get().build()
+            client.newCall(getReq).execute().use { getRes ->
+                if (getRes.isSuccessful) {
+                    val root = org.json.JSONObject(getRes.body?.string() ?: "")
+                    val parentsArr = root.optJSONArray("parents")
+                    if (parentsArr != null && parentsArr.length() > 0) {
+                        val ids = mutableListOf<String>()
+                        for (i in 0 until parentsArr.length()) ids.add(parentsArr.getString(i))
+                        previousParents = ids.joinToString(",")
+                    }
+                }
+            }
+
+            var targetParentId: String? = null
+            val parts = dirName.split("/").filter { it.isNotBlank() }
+            for (part in parts) {
+                targetParentId = searchOrCreateFolder(part, accessToken, targetParentId) ?: return@withContext false
+            }
+            if (targetParentId == null) return@withContext false
+
+            val updateUrl = okhttp3.HttpUrl.Builder()
+                .scheme("https")
+                .host("www.googleapis.com")
+                .addPathSegment("drive")
+                .addPathSegment("v3")
+                .addPathSegment("files")
+                .addPathSegment(fileId)
+                .addQueryParameter("addParents", targetParentId)
+                .addQueryParameter("removeParents", previousParents)
+                .build()
+
+            val request = Request.Builder()
+                .url(updateUrl)
+                .header("Authorization", "Bearer $accessToken")
+                .patch(okhttp3.RequestBody.create(null, ByteArray(0))) // Empty body
+                .build()
+
+            client.newCall(request).execute().use { response ->
+                return@withContext response.isSuccessful
+            }
+        } catch (e: Exception) { e.printStackTrace() }
+        false
     }
 }

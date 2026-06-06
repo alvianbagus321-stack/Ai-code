@@ -2613,7 +2613,30 @@ fun ChatScreen(
                                 val uriHandler = androidx.compose.ui.platform.LocalUriHandler.current
 
                                 Text(
-                                    text = "GEMINI FLASH API CONFIGURATION",
+                                    text = "PERSONAL AI MODEL SELECTION",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = electricBlue,
+                                    modifier = Modifier.padding(vertical = 6.dp)
+                                )
+                                val mainOnlineModel by viewModel.mainOnlineModel.collectAsState()
+                                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Card(
+                                        modifier = Modifier.weight(1f).clickable { viewModel.setMainOnlineModel("gemini") },
+                                        colors = CardDefaults.cardColors(containerColor = if (mainOnlineModel == "gemini") electricBlue else Color(0xFF1E293B)),
+                                    ) {
+                                        Text("Gemini 3.5", modifier = Modifier.padding(12.dp).fillMaxWidth(), color = Color.White, textAlign = TextAlign.Center)
+                                    }
+                                    Card(
+                                        modifier = Modifier.weight(1f).clickable { viewModel.setMainOnlineModel("deepseek") },
+                                        colors = CardDefaults.cardColors(containerColor = if (mainOnlineModel == "deepseek") electricBlue else Color(0xFF1E293B)),
+                                    ) {
+                                        Text("DeepSeek V4 Pro", modifier = Modifier.padding(12.dp).fillMaxWidth(), color = Color.White, textAlign = TextAlign.Center)
+                                    }
+                                }
+
+                                Text(
+                                    text = "API KEYS CONFIGURATION",
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 11.sp,
                                     color = electricBlue,
@@ -2639,6 +2662,28 @@ fun ChatScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .testTag("api_key_text_field")
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                
+                                val deepseekKey by viewModel.deepseekApiKey.collectAsState()
+                                OutlinedTextField(
+                                    value = deepseekKey,
+                                    onValueChange = { viewModel.setDeepseekApiKey(it) },
+                                    label = { Text("DeepSeek API Key", fontSize = 11.sp) },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = electricBlue,
+                                        unfocusedBorderColor = Color(0xFF334155),
+                                        focusedLabelColor = electricBlue,
+                                        unfocusedLabelColor = Color(0xFF64748B)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
                                 )
 
                                 Spacer(modifier = Modifier.height(6.dp))
@@ -3525,36 +3570,47 @@ fun ChatScreen(
                                         )
                                     )
 
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = "Model Otak AI:",
-                                            color = Color(0xFF94A3B8),
-                                            fontSize = 11.sp
-                                        )
-                                        Row {
-                                            val isGemini = currentAgentModel == "gemini"
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
-                                                    .background(if (isGemini) Color(0xFF2563EB) else Color(0xFF1E293B))
-                                                    .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "gemini") }
-                                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                                            ) {
-                                                Text("Gemini 3.5 (Cloud)", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp))
-                                                    .background(if (!isGemini) Color(0xFF10B981) else Color(0xFF1E293B))
-                                                    .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "local") }
-                                                    .padding(horizontal = 8.dp, vertical = 6.dp)
-                                            ) {
-                                                Text("AI Lokal (On-Device)", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                            }
+                                    Text(
+                                        text = "Model Otak AI:",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(bottom = 6.dp)
+                                    )
+                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                        val isGemini = currentAgentModel == "gemini"
+                                        val isDeepseek = currentAgentModel == "deepseek"
+                                        val isLocal = currentAgentModel == "local"
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
+                                                .background(if (isGemini) Color(0xFF2563EB) else Color(0xFF1E293B))
+                                                .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "gemini") }
+                                                .padding(vertical = 8.dp)
+                                        ) {
+                                            Text("Gemini 3.5", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                        }
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .background(if (isDeepseek) Color(0xFF8B5CF6) else Color(0xFF1E293B))
+                                                .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "deepseek") }
+                                                .padding(vertical = 8.dp)
+                                        ) {
+                                            Text("DeepSeek V4", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                        }
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp))
+                                                .background(if (isLocal) Color(0xFF10B981) else Color(0xFF1E293B))
+                                                .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "local") }
+                                                .padding(vertical = 8.dp)
+                                        ) {
+                                            Text("AI Lokal", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                         }
                                     }
                                 }
@@ -4232,8 +4288,76 @@ fun ChatBubble(
                                 )
                             }
                         }
+
+                        val thinkRegex = Regex("<think>([\\s\\S]*?)</think>")
+                        val hasThink = thinkRegex.containsMatchIn(message.content)
+                        var displayContent = message.content
+
+                        if (hasThink) {
+                            val match = thinkRegex.find(message.content)
+                            if (match != null) {
+                                val thoughtProcess = match.groupValues[1].trim()
+                                displayContent = message.content.replace(match.value, "").trim()
+                                var isExpanded by remember { mutableStateOf(false) }
+
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 8.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color(0xFF0F172A))
+                                        .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clickable { isExpanded = !isExpanded }
+                                            .padding(12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Search,
+                                                contentDescription = "Think",
+                                                tint = Color(0xFFA78BFA),
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(8.dp))
+                                            Text(
+                                                text = "Proses Berpikir (DeepSeek)",
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                        Icon(
+                                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                                            contentDescription = "Expand",
+                                            tint = Color(0xFF94A3B8),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                    if (isExpanded) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(Color(0xFF1E293B))
+                                                .padding(12.dp)
+                                        ) {
+                                            MarkdownTextWithImages(
+                                                text = thoughtProcess,
+                                                textColor = Color(0xFFCBD5E1),
+                                                modifier = Modifier.fillMaxWidth()
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         MarkdownTextWithImages(
-                            text = message.content,
+                            text = displayContent,
                             textColor = Color.White,
                             modifier = Modifier.fillMaxWidth()
                         )

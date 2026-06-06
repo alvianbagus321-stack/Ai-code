@@ -55,6 +55,12 @@ class ChatRepository(
     private val _storageType = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("storage_type", "drive") ?: "drive")
     val storageType: StateFlow<String> = _storageType.asStateFlow()
 
+    private val _deepseekApiKey = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("deepseek_api_key", "") ?: "")
+    val deepseekApiKey: StateFlow<String> = _deepseekApiKey.asStateFlow()
+
+    private val _mainOnlineModel = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("main_online_model", "gemini") ?: "gemini")
+    val mainOnlineModel: StateFlow<String> = _mainOnlineModel.asStateFlow()
+
     private val _localDirectoryUri = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("local_directory_uri", null))
     val localDirectoryUri: StateFlow<String?> = _localDirectoryUri.asStateFlow()
 
@@ -137,20 +143,58 @@ class ChatRepository(
         _storageType.value = type
     }
     
+    fun setDeepseekApiKey(key: String) {
+        sharedPrefs.edit().putString("deepseek_api_key", key).apply()
+        _deepseekApiKey.value = key
+    }
+
+    fun setMainOnlineModel(model: String) {
+        sharedPrefs.edit().putString("main_online_model", model).apply()
+        _mainOnlineModel.value = model
+    }
+
     fun setLocalDirectoryUri(uri: String?) {
         sharedPrefs.edit().putString("local_directory_uri", uri).apply()
         _localDirectoryUri.value = uri
     }
 
-    private fun saveFileLocal(filename: String, content: String): Boolean {
+    private fun saveFileLocal(filename: String, content: String, dirName: String? = null): Boolean {
         return try {
             val directoryUri = Uri.parse(_localDirectoryUri.value ?: return false)
-            val docFile = DocumentFile.fromTreeUri(context, directoryUri)
-            val file = docFile?.findFile(filename) ?: docFile?.createFile("text/plain", filename)
+            var rootDocFile = DocumentFile.fromTreeUri(context, directoryUri)
+            
+            if (!dirName.isNullOrBlank()) {
+                val parts = dirName.split("/").filter { it.isNotBlank() }
+                for (part in parts) {
+                    var nextDoc = rootDocFile?.findFile(part)
+                    if (nextDoc == null) {
+                        nextDoc = rootDocFile?.createDirectory(part)
+                    }
+                    rootDocFile = nextDoc
+                }
+            }
+            
+            val file = rootDocFile?.findFile(filename) ?: rootDocFile?.createFile("text/plain", filename)
             file?.uri?.let { uri ->
                 context.contentResolver.openOutputStream(uri)?.bufferedWriter().use { it?.write(content) }
                 true
             } ?: false
+        } catch (e: Exception) { e.printStackTrace(); false }
+    }
+
+    private fun moveFileLocal(filename: String, dirName: String): Boolean {
+        return try {
+            val content = readFileLocal(filename) ?: return false
+            val saveResult = saveFileLocal(filename, content, dirName)
+            if (saveResult) {
+                // delete the original
+                try {
+                    val directoryUri = Uri.parse(_localDirectoryUri.value ?: "")
+                    val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+                    docFile?.findFile(filename)?.delete()
+                } catch(e: Exception) {}
+            }
+            saveResult
         } catch (e: Exception) { e.printStackTrace(); false }
     }
 
@@ -187,8 +231,56 @@ class ChatRepository(
 
         var replacedText = originalText
 
-        // 1. Parse .create <filename>\n<content>\n.endfile blocks
-        val createRegex = Regex("""\.create\s+(\S+)[\r\n]+([\s\S]*?)[\r\n]+\.endfile""")
+        // 1. Parse .list
+        val listRegex = Regex("""\.list""")
+        if (listRegex.containsMatchIn(replacedText)) {
+            val fileList = if (isDrive) {
+                googleDriveHelper.listFiles().joinToString("\n") { "- $it" }.ifEmpty { "Folder kosong." }
+            } else {
+                try {
+                    val directoryUri = Uri.parse(_localDirectoryUri.value ?: "")
+                    val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+                    docFile?.listFiles()?.joinToString("\n") { "- ${it.name}" } ?: "Folder kosong/Tidak bisa dibaca."
+                } catch (e: Exception) { "Gagal membaca direktori." }
+            }
+            replacedText = replacedText.replace(".list", "\n\n```file:DirectoryList\n$fileList\n```")
+        }
+
+        // 2. Parse .delete <filename>
+        val deleteRegex = Regex("""\.delete\s+(\S+)""")
+        val deleteMatches = deleteRegex.findAll(replacedText)
+        for (match in deleteMatches) {
+            val filename = match.groupValues[1]
+            val success = if (isDrive) {
+                googleDriveHelper.deleteFile(filename)
+            } else {
+                try {
+                    val directoryUri = Uri.parse(_localDirectoryUri.value ?: "")
+                    val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+                    docFile?.findFile(filename)?.delete() ?: false
+                } catch (e: Exception) { false }
+            }
+            val status = if (success) "Berhasil dihapus." else "Gagal dihapus/tidak ditemukan."
+            replacedText = replacedText.replace(match.value, "\n```file:$filename:$status\n```")
+        }
+
+        // 2.5 Parse .mv <filename> <dir>
+        val mvRegex = Regex("""\.mv\s+(\S+)\s+([^\r\n]+)""")
+        val mvMatches = mvRegex.findAll(replacedText)
+        for (match in mvMatches) {
+            val filename = match.groupValues[1]
+            val dirName = match.groupValues[2].trim()
+            val success = if (isDrive) {
+                googleDriveHelper.moveFile(filename, dirName)
+            } else {
+                moveFileLocal(filename, dirName)
+            }
+            val status = if (success) "Berhasil dipindahkan ke $dirName." else "Gagal dipindahkan/tidak ditemukan."
+            replacedText = replacedText.replace(match.value, "\n```file:$filename:$status\n```")
+        }
+
+        // 3. Parse .create <filename> [dir]\n<content>\n.endfile blocks
+        val createRegex = Regex("""\.create[ \t]+(\S+)(?:[ \t]+([^\r\n]+))?[\r\n]+([\s\S]*?)[\r\n]+\.endfile""")
         val matches = createRegex.findAll(originalText)
         
         var modified = false
@@ -197,17 +289,19 @@ class ChatRepository(
         for (match in matches) {
             val fullMatch = match.value
             val filename = match.groupValues[1]
-            val content = match.groupValues[2]
+            val dirName = match.groupValues[2].trim().takeIf { it.isNotBlank() }
+            val content = match.groupValues[3]
 
             val success = if (isDrive) {
-                googleDriveHelper.syncFileToDrive(filename, content)
+                googleDriveHelper.syncFileToDrive(filename, content, dirName)
             } else {
-                saveFileLocal(filename, content)
+                saveFileLocal(filename, content, dirName)
             }
             modified = true
             
             val storageDisplay = if (isDrive) "Google Drive" else "Lokal"
-            val storageMsg = if (success) "Tersinkronisasi dengan $storageDisplay" else "Gagal sinkron/simpan ($storageDisplay)"
+            val dirPathMsg = if (dirName != null) " di folder $dirName" else ""
+            val storageMsg = if (success) "Tersinkronisasi dengan $storageDisplay$dirPathMsg" else "Gagal sinkron/simpan ($storageDisplay)"
             
             val replacement = "```file:$filename:$storageMsg\n$content\n```"
             replacedText = replacedText.replace(fullMatch, replacement)
@@ -555,6 +649,29 @@ class ChatRepository(
                         tokensPerSecond = 0f,
                         engineType = "Imagen 3 (Online)"
                     )
+                } else if (_mainOnlineModel.value == "deepseek") {
+                    val previousMessages = chatDao.getMessagesForSession(sessionId).firstOrNull() ?: emptyList()
+                    val history = previousMessages.filter { it.id != userMsg.id }
+                    
+                    val result = onlineLlmEngine.generateDeepSeekResponse(
+                        prompt = promptText,
+                        history = history,
+                        apiKey = _deepseekApiKey.value,
+                        modelName = "deepseek-reasoner",
+                        systemPrompt = systemPrompt
+                    )
+
+                    val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)
+
+                    ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = result.text,
+                        timestamp = System.currentTimeMillis(),
+                        inferenceTimeMs = result.timeMs,
+                        tokensPerSecond = if (result.timeMs > 0) speed else 0f,
+                        engineType = "DeepSeek V4 Pro"
+                    )
                 } else {
                     val previousMessages = chatDao.getMessagesForSession(sessionId).firstOrNull() ?: emptyList()
                     // Exclude the recently inserted userMsg from history since the engine appends the user prompt separately
@@ -707,6 +824,34 @@ class ChatRepository(
                     duration = result.timeMs
                     tokSpeed = result.tokensPerSec
                     actualEngineUsed = "$agentName (AI Lokal)"
+                } else if (agentModel == "deepseek") {
+                    val dKey = _deepseekApiKey.value.trim()
+                    if (dKey.length > 5) {
+                        try {
+                            val apiHistory = history.filter { it.id != userMsg.id }
+                            val result = onlineLlmEngine.generateDeepSeekResponse(
+                                prompt = currentPrompt,
+                                history = apiHistory,
+                                apiKey = dKey,
+                                modelName = "deepseek-reasoner",
+                                systemPrompt = customizedSystemPrompt
+                            )
+                            responseText = result.text
+                            duration = result.timeMs
+                            tokSpeed = (responseText.split("\\s+".toRegex()).size * 1.3f) / (duration / 1000f)
+                            actualEngineUsed = "$agentName (DeepSeek V4 Pro)"
+                        } catch (e: Exception) {
+                            responseText = "Maaf, $agentName gagal merespons dengan DeepSeek: ${e.localizedMessage}"
+                            duration = System.currentTimeMillis() - startTime
+                            tokSpeed = 0f
+                            actualEngineUsed = "$agentName (Gagal)"
+                        }
+                    } else {
+                        responseText = "Maaf, API Key DeepSeek belum diatur. Buka Pengaturan -> Storage/DeepSeek untuk memasukkan API Key."
+                        duration = System.currentTimeMillis() - startTime
+                        tokSpeed = 0f
+                        actualEngineUsed = "$agentName (Gagal)"
+                    }
                 } else {
                     var success = false
                     var errorMsg = ""

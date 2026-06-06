@@ -193,6 +193,8 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val userName: StateFlow<String> = repository.userName
     val storageType: StateFlow<String> = repository.storageType
     val localDirectoryUri: StateFlow<String?> = repository.localDirectoryUri
+    val deepseekApiKey: StateFlow<String> = repository.deepseekApiKey
+    val mainOnlineModel: StateFlow<String> = repository.mainOnlineModel
     val agentNamesFlow: StateFlow<List<String>> = kotlinx.coroutines.flow.combine(repository.agentNames) { it.toList() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.agentNames.map { it.value })
 
 
@@ -206,6 +208,14 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun setStorageType(type: String) {
         repository.setStorageType(type)
+    }
+
+    fun setDeepseekApiKey(key: String) {
+        repository.setDeepseekApiKey(key)
+    }
+
+    fun setMainOnlineModel(model: String) {
+        repository.setMainOnlineModel(model)
     }
 
     fun setLocalDirectoryUri(uri: String?) {

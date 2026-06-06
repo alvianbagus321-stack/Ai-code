@@ -66,7 +66,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
         repository.setImageGenMode(mode)
     }
 
-    private val _systemPrompt = MutableStateFlow("You are a helpful AI assistant. Answer user queries accurately and directly.")
+    private val _systemPrompt = MutableStateFlow("Anda adalah asisten AI yang cerdas dan sangat membantu. JAWABLAH SESINGKAT MUNGKIN, langsung ke intinya (to-the-point) tanpa basa-basi pembuka/penutup yang tidak perlu demi menghemat memori perangkat, daya, dan penggunaan token API secara maksimal, namun tetap menjaga keramahan dan keprofesionalan.")
     val systemPrompt: StateFlow<String> = _systemPrompt.asStateFlow()
 
     private val _isImagenModeActive = MutableStateFlow(false)

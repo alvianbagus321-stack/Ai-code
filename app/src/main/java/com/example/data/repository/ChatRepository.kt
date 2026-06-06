@@ -753,9 +753,7 @@ class ChatRepository(
             if (currentMessages.size <= 1) {
                 val shortTitle = "👥 " + (if (promptText.length > 20) promptText.take(18) + "..." else promptText)
                 chatDao.updateSessionTitle(sessionId, shortTitle)
-            }
-
-            // 2. Loop through active agents
+                  // 2. Loop through active agents
             val activeCount = _numAgents.value
             val agentsList = (1..activeCount).map { i ->
                 Triple(agentNames[i - 1].value, agentPrompts[i - 1].value, agentModels[i - 1].value)
@@ -769,26 +767,54 @@ class ChatRepository(
             
             val isTagged = promptText.contains("@")
 
-            var conversationContext = promptText
+            var conversationContext = "Manajer: $promptText"
             
-            for ((agentName, agentPrompt, agentModel) in agentsList) {
+            for (index in agentsList.indices) {
+                val (agentName, agentPrompt, agentModel) = agentsList[index]
+                
                 // If private message, skip if not target
                 if (privateTarget != null && !agentName.equals(privateTarget, ignoreCase = true)) {
                     continue
+                }
+                
+                // Ensure strictly sequential, one-by-one execution with safety delays to let memory settle
+                if (index > 0) {
+                    _currentActiveAgentRunning.value = "$agentName (Menunggu giliran...)"
+                    System.gc()
+                    kotlinx.coroutines.delay(3000L) // 3 seconds safety cool-down
+                } else {
+                    System.gc()
+                    kotlinx.coroutines.delay(500L)
                 }
                 
                 // Update active status
                 _currentActiveAgentRunning.value = agentName
                 notificationHelper.showNotification(
                     "Diskusi Multi-Agen Aktif",
-                    "Agen [$agentName] sedang memproses ${if (privateTarget != null) "pesan pribadi" else "pesan"}..."
+                    "Agen [$agentName] sedang memproses ${if (privateTarget != null) "pesan pribadi" else "pesan"} secara bergiliran..."
                 )
 
-                // Read the message history up to this point
-                val history = chatDao.getMessagesForSession(sessionId).firstOrNull() ?: emptyList()
-                
-                // Use accumulated conversation context
-                val currentPrompt = if (privateContent != null) privateContent else conversationContext
+                // Build a unified structured collaborative workspace prompt so agents can reply to each other safely
+                // This also avoids 400 bad requests from consecutive "model" role messages in external APIs (like Gemini/DeepSeek)
+                val workspaceTranscript = buildString {
+                    append("=== COLLABORATIVE MULTI-AGENT WORKSPACE ===\n")
+                    append("Anda berada di dalam ruang kerja kolaboratif interaktif bersama rekan tim Anda.\n")
+                    append("Sebagai arsitek AI: $agentName ($agentModel), bacalah jalannya diskusi di bawah ini, lalu berikan opini/solusi terbaik Anda.\n\n")
+                    
+                    append("--- HISTORI JALANNYA DISKUSI (BACA DENGAN TELITI) ---\n")
+                    append(conversationContext)
+                    append("\n--- SELESAI HISTORI ---\n\n")
+                    
+                    append("=== ATURAN / INSTRUKSI DISKUSI ===\n")
+                    append("1. JAWAB SESINGKAT MUNGKIN, langsung ke intinya (CONCISE & DIRECT). Hindari basa-basi panjang, salam pembuka/penutup yang tidak perlu, atau penjelasan bertele-tele untuk menghemat kuota token API dan memori lokal.\n")
+                    append("2. Sangat disarankan untuk menyapa, mengkritik, setuju, atau melanjutkan gagasan agen lain dengan memention nama mereka memakai format '@NamaAgen' (Contoh: '@${agentsList.firstOrNull()?.first ?: "AgenLain"} usulan menarik, berikut alternatif singkatnya...').\n")
+                    append("3. JANGAN berpura-pura atau menulis dialog mewakili agen lainnya. Cukup bersuara singkat sebagai $agentName.\n")
+                    if (privateContent != null) {
+                        append("MANAJER MEMBERIKAN PESAN KHUSUS UNTUK ANDA: $privateContent\n")
+                    }
+                    append("4. Tulislah respon Anda secara natural dan profesional, tidak terlalu kaku namun super hemat kata!\n\n")
+                    append("[Kontribusi Jawaban dari $agentName]:")
+                }
 
                 // Construct System Instruction for this specific agent
                 val otherAgentsInfo = agentsList.filter { it.first != agentName }
@@ -799,17 +825,18 @@ class ChatRepository(
                         "Peran & Instruksi Anda: $agentPrompt\n\n" +
                         "Anda adalah bagian dari tim diskusi AI multi-agen. Manajer Anda adalah 'User/Manajer Tim'.\n" +
                         "Rekan tim lainnya di ruangan ini: $otherAgentsInfo.\n" +
-                        "Bahaslah masalah yang diajukan oleh Manajer Tim secara kolaboratif. Dahulukan instruksi dari Manajer Tim.\n"
+                        "Bahaslah masalah yang diajukan secara kolaboratif. Saling mengobrol & menanggapi satu sama lain.\n" +
+                        "PENTING: Jawablah sesingkat mungkin, to-the-point, dan langsung pada substansi gagasan Anda tanpa basa-basi pembuka yang melelahkan. Hemat kata demi menghemat daya dan token API, namun tetap jaga bahasa yang sopan, ramah, dan natural.\n"
                 
                 if (privateTarget != null) {
                     customizedSystemPrompt += "\nPESAN PRIBADI (HANYA UNTUK ANDA): $privateContent\n"
                 }
                 
                 if (isTagged && promptText.contains("@$agentName", ignoreCase = true)) {
-                    customizedSystemPrompt += "\nPERHATIAN: Manajer secara spesifik mengajak Anda bicara (@$agentName).\n"
+                    customizedSystemPrompt += "\nPERHATIAN: Manajer secara spesifik mengajak Anda bicara (@$agentName). Berikan respons terfokus dan singkat.\n"
                 }
 
-                customizedSystemPrompt += "\nPENTING: Sadari nama Anda sendiri '$agentName' dan jangan berbicara atas nama agen lain. Mulailah respons Anda langsung dengan pendapat Anda. Gunakan bahasa yang sama dengan input Manajer!"
+                customizedSystemPrompt += "\nPENTING: Sadari nama Anda sendiri '$agentName' dan jangan berbicara atas nama agen lain. Mulailah respons Anda langsung dengan pendapat Anda (tanpa frasa pembuka seperti 'Tentu, saya...' atau 'Halo...'). Gunakan bahasa yang sama dengan input Manajer!"
 
                 var responseText: String
                 var duration: Long = 0L
@@ -820,7 +847,7 @@ class ChatRepository(
 
                 if (agentModel.startsWith("local")) {
                     val reqModel = if (agentModel.contains(":")) agentModel.substringAfter(":") else null
-                    val result = offlineLlmEngine.generateResponse(currentPrompt, systemPrompt = customizedSystemPrompt, requestedModelName = reqModel)
+                    val result = offlineLlmEngine.generateResponse(workspaceTranscript, systemPrompt = customizedSystemPrompt, requestedModelName = reqModel)
                     responseText = result.text
                     duration = result.timeMs
                     tokSpeed = result.tokensPerSec
@@ -829,10 +856,9 @@ class ChatRepository(
                     val dKey = _deepseekApiKey.value.trim()
                     if (dKey.length > 5) {
                         try {
-                            val apiHistory = history.filter { it.id != userMsg.id }
                             val result = onlineLlmEngine.generateDeepSeekResponse(
-                                prompt = currentPrompt,
-                                history = apiHistory,
+                                prompt = workspaceTranscript,
+                                history = emptyList(), // Avoid consecutive "model" role messages API validation crash
                                 apiKey = dKey,
                                 modelName = "deepseek-reasoner",
                                 systemPrompt = customizedSystemPrompt
@@ -866,10 +892,9 @@ class ChatRepository(
                         val keySlotVal = apiKeys[triedSlot - 1].value.trim()
                         if (keySlotVal.length > 5) {
                             try {
-                                val apiHistory = history.filter { it.id != userMsg.id }
                                 val result = onlineLlmEngine.generateGroundedResponse(
-                                    prompt = currentPrompt,
-                                    history = apiHistory,
+                                    prompt = workspaceTranscript,
+                                    history = emptyList(), // Avoid consecutive "model" role messages API validation crash
                                     apiKey = keySlotVal,
                                     searchEnabled = false,
                                     systemPrompt = customizedSystemPrompt,
@@ -925,7 +950,7 @@ class ChatRepository(
                     engineType = actualEngineUsed
                 )
                 chatDao.insertMessage(agentMsg)
-            }
+            }        }
         } finally {
             _currentActiveAgentRunning.value = null
             notificationHelper.dismissNotification()

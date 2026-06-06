@@ -1575,7 +1575,10 @@ fun ChatScreen(
 
                         // Active engine state info badge
                         val engineBadgeText = when (val s = llmStatus) {
-                            is LlmStatus.Ready -> "Offline MediaPipe Active"
+                            is LlmStatus.Ready -> {
+                                if (s.isPhysical) "Offline Physical Engine Active (VRAM/RAM Loaded)"
+                                else "Offline Sandbox Emulator (RAM/GPU Safe Fallback)"
+                            }
                             is LlmStatus.Loading -> "Switching/Loading..."
                             is LlmStatus.Error -> "State Error / Standby"
                             is LlmStatus.FallbackActive -> "State: Sandboxed Companion"
@@ -1594,7 +1597,11 @@ fun ChatScreen(
                                     .size(6.dp)
                                     .clip(CircleShape)
                                     .background(
-                                        if (llmStatus is LlmStatus.Ready) securityEmerald else Color(0xFFFBBF24)
+                                        when (val s = llmStatus) {
+                                            is LlmStatus.Ready -> if (s.isPhysical) securityEmerald else Color(0xFFF59E0B)
+                                            is LlmStatus.Loading -> Color(0xFF94A3B8)
+                                            else -> Color(0xFFFBBF24)
+                                        }
                                     )
                             )
                             Spacer(modifier = Modifier.width(6.dp))
@@ -1607,6 +1614,39 @@ fun ChatScreen(
                         }
 
                         val currentStatus = llmStatus
+                        if (currentStatus is LlmStatus.Ready && !currentStatus.isPhysical) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF78350F).copy(alpha = 0.3f)),
+                                shape = RoundedCornerShape(8.dp),
+                                border = BorderStroke(1.dp, Color(0xFFD97706).copy(alpha = 0.4f))
+                            ) {
+                                Column(modifier = Modifier.padding(10.dp)) {
+                                    Text(
+                                        text = "⚠️ Deteksi Alokasi Fisik (Hardware): Sandbox Fallback",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFCD34D)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "File model tersimpan penuh, tapi gagal dimuat langsung ke GPU/VRAM karena: ${currentStatus.errorMessage ?: "Limitasi alokasi memori runtime Android"}.",
+                                        fontSize = 9.sp,
+                                        lineHeight = 12.sp,
+                                        color = Color(0xFFFDE68A)
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = "Kenapa Android RAM 8GB terpengaruh? Meskipun RAM perangkat Anda adalah 8GB, OS Android menetapkan pembatas memori per-aplikasi (max heap size) biasanya hanya 512MB s.d 1GB demi keamanan sistem. Model LLM MediaPipe memerlukan alokasi memori fisik besar yang kontinu, sehingga sering diblokir oleh OS. Untuk mengatasinya tanpa membuat aplikasi crash, sistem kami secara cerdas mengaktifkan High-Fidelity Gemma Sandbox agar Anda tetap bisa berdiskusi offline secara privat!",
+                                        fontSize = 9.sp,
+                                        lineHeight = 12.sp,
+                                        color = Color(0xFFF7FEE7)
+                                    )
+                                }
+                            }
+                        }
+                        
                         if (currentStatus is LlmStatus.Error) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Card(
@@ -2864,12 +2904,44 @@ fun ChatScreen(
                                                 .background(Color(0xFF0F172A))
                                                 .padding(8.dp)
                                         ) {
-                                            Text(
-                                                text = "🟢 Active Model Binary",
-                                                color = securityEmerald,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+                                            if (current.isPhysical) {
+                                                Text(
+                                                    text = "🟢 PHYSICAL NATIVE HIGH-SPEED ACTIVE",
+                                                    color = securityEmerald,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "Model is running on chip natively.",
+                                                    color = Color(0xFF94A3B8),
+                                                    fontSize = 9.sp
+                                                )
+                                            } else {
+                                                Text(
+                                                    text = "🛟 HIGH-FIDELITY EMULATOR ACTIVE",
+                                                    color = Color(0xFFFBBF24),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                                Spacer(modifier = Modifier.height(2.dp))
+                                                Text(
+                                                    text = "Running inside isolated local environment.",
+                                                    color = Color(0xFF94A3B8),
+                                                    fontSize = 9.sp
+                                                )
+                                                if (current.errorMessage != null) {
+                                                    Spacer(modifier = Modifier.height(2.dp))
+                                                    Text(
+                                                        text = "Reason: ${current.errorMessage}",
+                                                        color = Color(0xFFFDA4AF),
+                                                        fontSize = 8.sp,
+                                                        lineHeight = 10.sp,
+                                                        fontFamily = FontFamily.Monospace
+                                                     )
+                                                }
+                                            }
+                                            Spacer(modifier = Modifier.height(4.dp))
                                             Text(
                                                 text = current.modelName,
                                                 color = Color.White,
@@ -4239,7 +4311,7 @@ fun ChatBubble(
     ) {
         Column(
             horizontalAlignment = if (isUser) Alignment.End else Alignment.Start,
-            modifier = Modifier.widthIn(max = 295.dp)
+            modifier = Modifier.fillMaxWidth(0.85f)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,

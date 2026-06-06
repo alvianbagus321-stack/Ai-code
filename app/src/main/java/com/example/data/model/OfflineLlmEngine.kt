@@ -281,9 +281,40 @@ class OfflineLlmEngine(private val context: Context) {
      * Executes the query on-device. If the physical model is compiled, runs MediaPipe LlmInference.
      * Otherwise, falls back to a high-fidelity local smart helper to keep testing offline and fluent.
      */
-    suspend fun generateResponse(prompt: String, apiKey: String = "", systemPrompt: String = ""): InferenceResult = withContext(Dispatchers.IO) {
+    suspend fun generateResponse(prompt: String, apiKey: String = "", systemPrompt: String = "", requestedModelName: String? = null): InferenceResult = withContext(Dispatchers.IO) {
         val startTime = System.currentTimeMillis()
         val lowerPrompt = prompt.trim().lowercase(Locale.getDefault())
+
+        if (requestedModelName != null && requestedModelName.isNotBlank() && requestedModelName != _selectedModelName.value) {
+            val modelFile = File(modelsDir, requestedModelName)
+            if (modelFile.exists()) {
+                val ext = modelFile.extension.lowercase(Locale.getDefault())
+                _selectedModelName.value = requestedModelName
+                try {
+                    if (ext == "gguf") {
+                        llmInference?.close()
+                        llmInference = null
+                        val success = llamaCppEngine.loadModel(modelFile)
+                        if (success) {
+                            _status.value = LlmStatus.Ready(requestedModelName, modelFile.absolutePath)
+                        } else {
+                            _status.value = LlmStatus.Error("Failed to physically load GGUF $requestedModelName")
+                        }
+                    } else {
+                        llamaCppEngine.unloadModel()
+                        val options = com.google.mediapipe.tasks.genai.llminference.LlmInference.LlmInferenceOptions.builder()
+                            .setModelPath(modelFile.absolutePath)
+                            .setMaxTokens(1024)
+                            .build()
+                        llmInference?.close()
+                        llmInference = com.google.mediapipe.tasks.genai.llminference.LlmInference.createFromOptions(context, options)
+                        _status.value = LlmStatus.Ready(requestedModelName, modelFile.absolutePath)
+                    }
+                } catch (e: Exception) {
+                    _status.value = LlmStatus.Error("Failed to load model: ${e.message}")
+                }
+            }
+        }
 
         if (_devModeEnabled.value) {
             val interceptResponse = when (lowerPrompt) {

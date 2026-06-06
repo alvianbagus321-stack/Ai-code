@@ -3579,7 +3579,7 @@ fun ChatScreen(
                                     Row(modifier = Modifier.fillMaxWidth()) {
                                         val isGemini = currentAgentModel == "gemini"
                                         val isDeepseek = currentAgentModel == "deepseek"
-                                        val isLocal = currentAgentModel == "local"
+                                        val isLocal = currentAgentModel.startsWith("local")
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
@@ -3607,10 +3607,65 @@ fun ChatScreen(
                                                 .weight(1f)
                                                 .clip(RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp))
                                                 .background(if (isLocal) Color(0xFF10B981) else Color(0xFF1E293B))
-                                                .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "local") }
+                                                .clickable { 
+                                                    val available = viewModel.availableModels.value
+                                                    val defaultLocal = if (available.isNotEmpty()) "local:${available.first()}" else "local"
+                                                    viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, defaultLocal)
+                                                }
                                                 .padding(vertical = 8.dp)
                                         ) {
                                             Text("AI Lokal", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                        }
+                                    }
+                                    
+                                    if (currentAgentModel.startsWith("local")) {
+                                        val available = viewModel.availableModels.collectAsState().value
+                                        if (available.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Text("Pilih Model Offline untuk Agen ini:", color = Color(0xFF94A3B8), fontSize = 11.sp, modifier = Modifier.padding(bottom = 6.dp))
+                                            val selectedLocal = if (currentAgentModel.contains(":")) currentAgentModel.substringAfter(":") else available.firstOrNull() ?: ""
+                                            
+                                            var localDropdownExpanded by remember { mutableStateOf(false) }
+                                            Box(modifier = Modifier.fillMaxWidth()) {
+                                                OutlinedButton(
+                                                    onClick = { localDropdownExpanded = true },
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    colors = ButtonDefaults.outlinedButtonColors(
+                                                        containerColor = Color(0xFF1E293B),
+                                                        contentColor = Color.White
+                                                    ),
+                                                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                                                    shape = RoundedCornerShape(8.dp)
+                                                ) {
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                                        verticalAlignment = Alignment.CenterVertically
+                                                    ) {
+                                                        Text(text = selectedLocal, color = Color.White, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null, tint = Color.White)
+                                                    }
+                                                }
+                                                
+                                                DropdownMenu(
+                                                    expanded = localDropdownExpanded,
+                                                    onDismissRequest = { localDropdownExpanded = false },
+                                                    modifier = Modifier.background(Color(0xFF1E293B))
+                                                ) {
+                                                    available.forEach { mod ->
+                                                        DropdownMenuItem(
+                                                            text = { Text(mod, color = Color.White, fontSize = 12.sp) },
+                                                            onClick = {
+                                                                localDropdownExpanded = false
+                                                                viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "local:$mod")
+                                                            }
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        } else {
+                                            Spacer(modifier = Modifier.height(8.dp))
+                                            Text("Belum ada model offline (GGUF/BIN) di perangkat.", color = Color.Red, fontSize = 10.sp)
                                         }
                                     }
                                 }

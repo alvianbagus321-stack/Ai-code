@@ -818,12 +818,13 @@ class ChatRepository(
 
                 val startTime = System.currentTimeMillis()
 
-                if (agentModel == "local") {
-                    val result = offlineLlmEngine.generateResponse(currentPrompt, systemPrompt = customizedSystemPrompt)
+                if (agentModel.startsWith("local")) {
+                    val reqModel = if (agentModel.contains(":")) agentModel.substringAfter(":") else null
+                    val result = offlineLlmEngine.generateResponse(currentPrompt, systemPrompt = customizedSystemPrompt, requestedModelName = reqModel)
                     responseText = result.text
                     duration = result.timeMs
                     tokSpeed = result.tokensPerSec
-                    actualEngineUsed = "$agentName (AI Lokal)"
+                    actualEngineUsed = "$agentName (AI Lokal${if(reqModel != null) " - $reqModel" else ""})"
                 } else if (agentModel == "deepseek") {
                     val dKey = _deepseekApiKey.value.trim()
                     if (dKey.length > 5) {

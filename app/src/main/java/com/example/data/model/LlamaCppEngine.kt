@@ -167,20 +167,20 @@ class LlamaCppEngine(private val context: Context) {
         // 3. Greetings
         else if (lowerPrompt.contains("hi") || lowerPrompt.contains("hello") || lowerPrompt.contains("halo") || lowerPrompt.contains("hei") || lowerPrompt == "p" || lowerPrompt == "test") {
             if (isIndonesian) {
-                "Halo! Saya SmolLM2, asisten kecerdasan buatan (AI) lokal Anda yang berjalan 100% luring (offline) secara aman di perangkat Android via engine llama.cpp.\n\n" +
+                "Halo! Saya adalah Built-in Light AI (Local Sandbox), asisten kecerdasan buatan (AI) Anda yang berjalan 100% luring (offline) secara aman di perangkat Android.\n\n" +
                 "Ada yang bisa saya bantu hari ini dalam mode privat terisolasi ini?"
             } else {
-                "Hello there! I am SmolLM2, your trusted local AI companion operating 100% offline and securely on your device using llama.cpp.\n\n" +
+                "Hello there! I am Built-in Light AI (Local Sandbox), your trusted local AI companion operating 100% offline and securely on your device.\n\n" +
                 "How can I help you tackle your private offline workflows today?"
             }
         }
         // 4. Who are you
         else if (lowerPrompt.contains("siapa") || lowerPrompt.contains("who are you") || lowerPrompt.contains("nama")) {
             if (isIndonesian) {
-                "Saya adalah model bahasa SmolLM2 (versi instruksi terkuantisasi 8-bit) yang berjalan secara independen di ponsel Anda.\n\n" +
+                "Saya adalah Built-in Light AI (Local Sandbox) yang berjalan secara independen di ponsel Anda.\n\n" +
                 "Seluruh pemrosesan teks dilakukan sepenuhnya di CPU perangkat Anda tanpa mengirim satu byte pun data ke server luar, menjaga privasi Anda tetap 100% aman."
             } else {
-                "I am SmolLM2, a lightweight, highly-optimized 8-bit quantized language model running natively on your local CPU.\n\n" +
+                "I am Built-in Light AI (Local Sandbox), a lightweight AI running natively on your local CPU.\n\n" +
                 "Every token is calculated directly in this sandbox application, ensuring that zero data or chat history ever leaves your physical device."
             }
         }

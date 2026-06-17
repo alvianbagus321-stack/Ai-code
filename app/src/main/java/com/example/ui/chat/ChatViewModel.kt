@@ -327,8 +327,57 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     }
 
     fun updateMessage(message: ChatMessage) {
-        viewModelScope.launch {
-            repository.updateMessage(message)
+        if (_isGenerating.value) return
+        
+        if (message.role != "user") {
+            viewModelScope.launch {
+                repository.updateMessage(message)
+            }
+            return
+        }
+        
+        _isGenerating.value = true
+        repository.applicationScope.launch {
+            try {
+                val currentId = message.sessionId
+                
+                // 1. Update the user message in local DB
+                repository.updateMessage(message)
+                
+                // 2. Delete all subsequent messages in this session
+                repository.deleteMessagesAfterId(currentId, message.id)
+                
+                val isMulti = isActiveSessionMultiAgent.value || repository.multiAgentSessionIds.value.contains(currentId)
+                
+                if (isMulti) {
+                    logEvent("Routing edited prompt to Multi-Agent pipeline within session $currentId")
+                    repository.sendMultiAgentMessageAndAwaitResponse(
+                        sessionId = currentId,
+                        promptText = message.content
+                    )
+                } else {
+                    logEvent("Routing edited request to ${if (_isOnlineMode.value) "Online Gemini" else "Offline LLM"} within session $currentId")
+                    repository.sendMessageAndAwaitResponse(
+                        sessionId = currentId,
+                        promptText = message.content,
+                        isOnlineMode = _isOnlineMode.value,
+                        webSearchEnabled = _webSearchEnabled.value,
+                        apiKey = repository.apiKey.value,
+                        systemPrompt = _systemPrompt.value,
+                        imageBase64 = message.imageBase64,
+                        isImagenActive = _isImagenModeActive.value
+                    )
+                    if (_isImagenModeActive.value) {
+                        _isImagenModeActive.value = false
+                    }
+                }
+                logEvent("Regenerated response on edited message successfully.")
+            } catch (e: Exception) {
+                logEvent("Error editing and regenerating message: ${e.message}")
+                Log.e(TAG, "Error editing message: ${e.message}", e)
+            } finally {
+                _isGenerating.value = false
+            }
         }
     }
 

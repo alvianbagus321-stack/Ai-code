@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import org.json.JSONObject
+import org.json.JSONException
 import java.util.UUID
 
 class ChatRepository(
@@ -57,6 +59,9 @@ class ChatRepository(
 
     private val _deepseekApiKey = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("deepseek_api_key", "") ?: "")
     val deepseekApiKey: StateFlow<String> = _deepseekApiKey.asStateFlow()
+
+    private val _glmApiKey = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("glm_api_key", "") ?: "")
+    val glmApiKey: StateFlow<String> = _glmApiKey.asStateFlow()
 
     private val _mainOnlineModel = kotlinx.coroutines.flow.MutableStateFlow(sharedPrefs.getString("main_online_model", "gemini") ?: "gemini")
     val mainOnlineModel: StateFlow<String> = _mainOnlineModel.asStateFlow()
@@ -146,6 +151,11 @@ class ChatRepository(
     fun setDeepseekApiKey(key: String) {
         sharedPrefs.edit().putString("deepseek_api_key", key).apply()
         _deepseekApiKey.value = key
+    }
+
+    fun setGlmApiKey(key: String) {
+        sharedPrefs.edit().putString("glm_api_key", key).apply()
+        _glmApiKey.value = key
     }
 
     fun setMainOnlineModel(model: String) {
@@ -279,11 +289,106 @@ class ChatRepository(
             replacedText = replacedText.replace(match.value, "\n```file:$filename:$status\n```")
         }
 
+        var modified = false
+
+        // 2.5 Parse JSON function_call format
+        // This regex tries to find blocks starting with { and containing "function_call", "name", and { }
+        val jsonToolRegex = Regex("""(?s)```[a-zA-Z]*\n?(\{.*?"function_call".*?\})\n?```""")
+        var jsonMatches = jsonToolRegex.findAll(replacedText).toList()
+        
+        if (jsonMatches.isEmpty()) {
+            val fallbackRegex = Regex("""(?s)(\{\s*"function_call"\s*:.*\})""")
+            jsonMatches = fallbackRegex.findAll(replacedText).toList()
+        }
+
+        for (match in jsonMatches) {
+            val fullMatch = match.value
+            val jsonString = match.groupValues.getOrNull(1) ?: match.groupValues[0]
+            
+            try {
+                // Find the first { and last } to clean up loose tracking
+                val startIdx = jsonString.indexOf('{')
+                val endIdx = jsonString.lastIndexOf('}')
+                if (startIdx != -1 && endIdx != -1 && endIdx > startIdx) {
+                    val cleanJson = jsonString.substring(startIdx, endIdx + 1)
+                    val jsonObj = JSONObject(cleanJson)
+                    if (jsonObj.has("function_call")) {
+                        val functionCall = jsonObj.getJSONObject("function_call")
+                        val actName = functionCall.optString("name", "")
+                        val params = if (functionCall.has("parameters")) functionCall.getJSONObject("parameters") else JSONObject()
+                        
+                        var toolStatusMsg = ""
+                        var toolContentMsg = ""
+                        var toolFilename = ""
+
+                        when (actName) {
+                            "create_file" -> {
+                                val filename = params.optString("filename", "untitled.txt")
+                                val content = params.optString("content", "")
+                                val dirName = params.optString("directory", null).takeIf { it.isNotBlank() }
+                                
+                                val success = if (isDrive) {
+                                    googleDriveHelper.syncFileToDrive(filename, content, dirName)
+                                } else {
+                                    saveFileLocal(filename, content, dirName)
+                                }
+                                modified = true
+                                val storageDisplay = if (isDrive) "Google Drive" else "Lokal"
+                                val dirPathMsg = if (dirName != null) " di folder $dirName" else ""
+                                toolStatusMsg = if (success) "Tersinkronisasi dengan $storageDisplay$dirPathMsg" else "Gagal sinkron/simpan ($storageDisplay)"
+                                toolContentMsg = content
+                                toolFilename = filename
+                                
+                                val replacement = "```file:$toolFilename:$toolStatusMsg\n$toolContentMsg\n```"
+                                replacedText = replacedText.replace(fullMatch, replacement)
+                            }
+                            "read_file" -> {
+                                val filename = params.optString("filename", "")
+                                val content = if (isDrive) googleDriveHelper.fetchFileFromDrive(filename) else readFileLocal(filename)
+                                modified = true
+                                val storageDisplay = if (isDrive) "Google Drive" else "Lokal"
+                                
+                                if (content != null) {
+                                    val feedMsg = ChatMessage(
+                                        sessionId = sessionId,
+                                        role = "user",
+                                        content = "[Konten File '$filename' dari $storageDisplay]:\n\n$content",
+                                        timestamp = System.currentTimeMillis() + 10L,
+                                        engineType = "$storageDisplay Sync"
+                                    )
+                                    chatDao.insertMessage(feedMsg)
+                                    replacedText = replacedText.replace(fullMatch, "*(📁 $storageDisplay: Berhasil memuat file '$filename' untuk dianalisis oleh AI!)*")
+                                } else {
+                                    replacedText = replacedText.replace(fullMatch, "*(📁 $storageDisplay: File '$filename' tidak ditemui atau gagal diunduh!)*")
+                                }
+                            }
+                            "delete_file" -> {
+                                val filename = params.optString("filename", "")
+                                val success = if (isDrive) {
+                                    googleDriveHelper.deleteFile(filename)
+                                } else {
+                                    try {
+                                        val directoryUri = Uri.parse(_localDirectoryUri.value ?: "")
+                                        val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+                                        docFile?.findFile(filename)?.delete() ?: false
+                                    } catch (e: Exception) { false }
+                                }
+                                modified = true
+                                val status = if (success) "Berhasil dihapus." else "Gagal dihapus/tidak ditemukan."
+                                replacedText = replacedText.replace(fullMatch, "\n```file:$filename:$status\n```")
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore parsing errors for non-JSON strings that accidentally matched the regex
+            }
+        }
+
         // 3. Parse .create <filename> [dir]\n<content>\n.endfile blocks
         val createRegex = Regex("""\.create[ \t]+(\S+)(?:[ \t]+([^\r\n]+))?[\r\n]+([\s\S]*?)[\r\n]+\.endfile""")
-        val matches = createRegex.findAll(originalText)
+        val matches = createRegex.findAll(replacedText)
         
-        var modified = false
         var appendix = ""
 
         for (match in matches) {
@@ -475,6 +580,13 @@ class ChatRepository(
     private val _currentActiveAgentRunning = kotlinx.coroutines.flow.MutableStateFlow<String?>(null)
     val currentActiveAgentRunning: StateFlow<String?> = _currentActiveAgentRunning.asStateFlow()
 
+    private val _isMultiAgentAutoRunning = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isMultiAgentAutoRunning = _isMultiAgentAutoRunning.asStateFlow()
+    
+    fun stopMultiAgentAutoRun() {
+        _isMultiAgentAutoRunning.value = false
+    }
+
     fun setCurrentActiveAgentRunning(name: String?) {
         _currentActiveAgentRunning.value = name
     }
@@ -649,6 +761,29 @@ class ChatRepository(
                         tokensPerSecond = 0f,
                         engineType = "Imagen 3 (Online)"
                     )
+                } else if (_mainOnlineModel.value == "glm5_2") {
+                    val previousMessages = chatDao.getMessagesForSessionList(sessionId)
+                    val history = previousMessages.filter { it.id != userMsg.id }
+                    
+                    val result = onlineLlmEngine.generateGlmResponse(
+                        prompt = promptText,
+                        history = history,
+                        apiKey = _glmApiKey.value,
+                        modelName = "glm-5.2-free",
+                        systemPrompt = systemPrompt
+                    )
+
+                    val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)
+
+                    ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = result.text,
+                        timestamp = System.currentTimeMillis(),
+                        inferenceTimeMs = result.timeMs,
+                        tokensPerSecond = if (result.timeMs > 0) speed else 0f,
+                        engineType = "GLM 5.2 (Zenmux)"
+                    )
                 } else if (_mainOnlineModel.value == "deepseek") {
                     val previousMessages = chatDao.getMessagesForSessionList(sessionId)
                     val history = previousMessages.filter { it.id != userMsg.id }
@@ -769,204 +904,266 @@ class ChatRepository(
             
             val isTagged = promptText.contains("@")
             
-            for (index in agentsList.indices) {
-                val (agentName, agentPrompt, agentModel) = agentsList[index]
-                
-                // If private message, skip if not target
-                if (privateTarget != null && !agentName.equals(privateTarget, ignoreCase = true)) {
-                    continue
+            val isContinuous = promptText.trim().startsWith("(.start)", ignoreCase = true)
+            _isMultiAgentAutoRunning.value = isContinuous
+            
+            var iterationCount = 0
+            var shouldStop = false
+
+            do {
+                if (iterationCount > 0 && !_isMultiAgentAutoRunning.value) {
+                    break
                 }
 
-                // Build a unified historic dialogue transcript for collaborative context awareness, updated dynamically for each agent!
-                val history = chatDao.getMessagesForSessionList(sessionId)
-                val conversationContext = history.sortedBy { it.timestamp }.joinToString("\n") { msg ->
-                    if (msg.role == "user") {
-                        "Manajer: ${msg.content}"
-                    } else {
-                        val senderName = if (msg.engineType.contains(" (")) {
-                            msg.engineType.substringBefore(" (")
-                        } else if (msg.engineType.isNotBlank()) {
-                            msg.engineType
+                for (index in agentsList.indices) {
+                    if (iterationCount > 0 && !_isMultiAgentAutoRunning.value) {
+                        shouldStop = true
+                        break
+                    }
+                    if (shouldStop) break
+
+                    val (agentName, agentPrompt, agentModel) = agentsList[index]
+                    
+                    // If private message, skip if not target
+                    if (privateTarget != null && !agentName.equals(privateTarget, ignoreCase = true)) {
+                        continue
+                    }
+
+                    // Build a unified historic dialogue transcript for collaborative context awareness, updated dynamically for each agent!
+                    val history = chatDao.getMessagesForSessionList(sessionId)
+                    val conversationContext = history.sortedBy { it.timestamp }.joinToString("\n") { msg ->
+                        if (msg.role == "user") {
+                            "Manajer: ${msg.content}"
                         } else {
-                            "Rekan AI"
+                            val senderName = if (msg.engineType.contains(" (")) {
+                                msg.engineType.substringBefore(" (")
+                            } else if (msg.engineType.isNotBlank()) {
+                                msg.engineType
+                            } else {
+                                "Rekan AI"
+                            }
+                            "$senderName: ${msg.content}"
                         }
-                        "$senderName: ${msg.content}"
                     }
-                }
-                
-                // Ensure strictly sequential, one-by-one execution with safety delays to let memory settle
-                if (index > 0) {
-                    _currentActiveAgentRunning.value = "$agentName (Menunggu giliran...)"
-                    System.gc()
-                    kotlinx.coroutines.delay(3000L) // 3 seconds safety cool-down
-                } else {
-                    System.gc()
-                    kotlinx.coroutines.delay(500L)
-                }
-                
-                // Update active status
-                _currentActiveAgentRunning.value = agentName
-                notificationHelper.showNotification(
-                    "Diskusi Multi-Agen Aktif",
-                    "Agen [$agentName] sedang memproses ${if (privateTarget != null) "pesan pribadi" else "pesan"} secara bergiliran..."
-                )
-
-                // Build a unified structured collaborative workspace prompt so agents can reply to each other safely
-                // This also avoids 400 bad requests from consecutive "model" role messages in external APIs (like Gemini/DeepSeek)
-                val workspaceTranscript = buildString {
-                    append("=== COLLABORATIVE MULTI-AGENT WORKSPACE ===\n")
-                    append("Anda berada di dalam ruang kerja kolaboratif interaktif bersama rekan tim Anda.\n")
-                    append("Sebagai arsitek AI: $agentName ($agentModel), bacalah jalannya diskusi di bawah ini, lalu berikan opini/solusi terbaik Anda.\n\n")
                     
-                    append("--- HISTORI JALANNYA DISKUSI (BACA DENGAN TELITI) ---\n")
-                    append(conversationContext)
-                    append("\n--- SELESAI HISTORI ---\n\n")
-                    
-                    append("=== ATURAN / INSTRUKSI DISKUSI ===\n")
-                    append("1. JAWAB SESINGKAT MUNGKIN, langsung ke intinya (CONCISE & DIRECT). Hindari basa-basi panjang, salam pembuka/penutup yang tidak perlu, atau penjelasan bertele-tele untuk menghemat kuota token API dan memori lokal.\n")
-                    append("2. Sangat disarankan untuk menyapa, mengkritik, setuju, atau melanjutkan gagasan agen lain dengan memention nama mereka memakai format '@NamaAgen' (Contoh: '@${agentsList.firstOrNull()?.first ?: "AgenLain"} usulan menarik, berikut alternatif singkatnya...').\n")
-                    append("3. JANGAN berpura-pura atau menulis dialog mewakili agen lainnya. Cukup bersuara singkat sebagai $agentName.\n")
-                    if (privateContent != null) {
-                        append("MANAJER MEMBERIKAN PESAN KHUSUS UNTUK ANDA: $privateContent\n")
+                    // Ensure strictly sequential, one-by-one execution with safety delays to let memory settle
+                    if (index > 0 || iterationCount > 0) {
+                        _currentActiveAgentRunning.value = "$agentName (Menunggu giliran...)"
+                        System.gc()
+                        kotlinx.coroutines.delay(3000L) // 3 seconds safety cool-down
+                    } else {
+                        System.gc()
+                        kotlinx.coroutines.delay(500L)
                     }
-                    append("4. Tulislah respon Anda secara natural dan profesional, tidak terlalu kaku namun super hemat kata!\n\n")
-                    append("[Kontribusi Jawaban dari $agentName]:")
-                }
+                    
+                    // Update active status
+                    _currentActiveAgentRunning.value = agentName
+                    notificationHelper.showNotification(
+                        "Diskusi Multi-Agen Aktif",
+                        "Agen [$agentName] sedang memproses ${if (privateTarget != null) "pesan pribadi" else "pesan"} secara bergiliran..."
+                    )
 
-                // Construct System Instruction for this specific agent
-                val otherAgentsInfo = agentsList.filter { it.first != agentName }
-                        .joinToString(", ") { "${it.first} (${it.third})" }
-                
-                var customizedSystemPrompt = "Anda adalah $agentName.\n" +
-                        "Model Anda: $agentModel.\n" +
-                        "Peran & Instruksi Anda: $agentPrompt\n\n" +
-                        "Anda adalah bagian dari tim diskusi AI multi-agen. Manajer Anda adalah 'User/Manajer Tim'.\n" +
-                        "Rekan tim lainnya di ruangan ini: $otherAgentsInfo.\n" +
-                        "Bahaslah masalah yang diajukan secara kolaboratif. Saling mengobrol & menanggapi satu sama lain.\n" +
-                        "PENTING: Jawablah sesingkat mungkin, to-the-point, dan langsung pada substansi gagasan Anda tanpa basa-basi pembuka yang melelahkan. Hemat kata demi menghemat daya dan token API, namun tetap jaga bahasa yang sopan, ramah, dan natural.\n"
-                
-                if (privateTarget != null) {
-                    customizedSystemPrompt += "\nPESAN PRIBADI (HANYA UNTUK ANDA): $privateContent\n"
-                }
-                
-                if (isTagged && promptText.contains("@$agentName", ignoreCase = true)) {
-                    customizedSystemPrompt += "\nPERHATIAN: Manajer secara spesifik mengajak Anda bicara (@$agentName). Berikan respons terfokus dan singkat.\n"
-                }
+                    // Build a unified structured collaborative workspace prompt so agents can reply to each other safely
+                    // This also avoids 400 bad requests from consecutive "model" role messages in external APIs (like Gemini/DeepSeek)
+                    val workspaceTranscript = buildString {
+                        append("=== COLLABORATIVE MULTI-AGENT WORKSPACE ===\n")
+                        append("Anda berada di dalam ruang kerja kolaboratif interaktif bersama rekan tim Anda.\n")
+                        append("Sebagai arsitek AI: $agentName ($agentModel), bacalah jalannya diskusi di bawah ini, lalu berikan opini/solusi terbaik Anda.\n\n")
+                        
+                        append("--- HISTORI JALANNYA DISKUSI (BACA DENGAN TELITI) ---\n")
+                        append(conversationContext)
+                        append("\n--- SELESAI HISTORI ---\n\n")
+                        
+                        append("=== ATURAN / INSTRUKSI DISKUSI ===\n")
+                        append("1. JAWAB SESINGKAT MUNGKIN, langsung ke intinya (CONCISE & DIRECT). Hindari basa-basi panjang, salam pembuka/penutup yang tidak perlu, atau penjelasan bertele-tele untuk menghemat kuota token API dan memori lokal.\n")
+                        append("2. Sangat disarankan untuk menyapa, mengkritik, setuju, atau melanjutkan gagasan agen lain dengan memention nama mereka memakai format '@NamaAgen' (Contoh: '@${agentsList.firstOrNull()?.first ?: "AgenLain"} usulan menarik, berikut alternatif singkatnya...').\n")
+                        append("3. JANGAN berpura-pura atau menulis dialog mewakili agen lainnya. Cukup bersuara singkat sebagai $agentName.\n")
+                        if (privateContent != null) {
+                            append("MANAJER MEMBERIKAN PESAN KHUSUS UNTUK ANDA: $privateContent\n")
+                        }
+                        append("4. Jika tugas telah selesai atau perbincangan usai dan tidak perlu dilanjutkan, keluarkan string literal '.stop' atau panggil tool function 'stop_conversation'.\n")
+                        append("5. Tulislah respon Anda secara natural dan profesional, tidak terlalu kaku namun super hemat kata!\n\n")
+                        append("[Kontribusi Jawaban dari $agentName]:")
+                    }
 
-                customizedSystemPrompt += "\nPENTING: Sadari nama Anda sendiri '$agentName' dan jangan berbicara atas nama agen lain. Mulailah respons Anda langsung dengan pendapat Anda (tanpa frasa pembuka seperti 'Tentu, saya...' atau 'Halo...'). Gunakan bahasa yang sama dengan input Manajer!"
+                    // Construct System Instruction for this specific agent
+                    val otherAgentsInfo = agentsList.filter { it.first != agentName }
+                            .joinToString(", ") { "${it.first} (${it.third})" }
+                    
+                    var customizedSystemPrompt = "Anda adalah $agentName.\n" +
+                            "Model Anda: $agentModel.\n" +
+                            "Peran & Instruksi Anda: $agentPrompt\n\n" +
+                            "Anda adalah bagian dari tim diskusi AI multi-agen. Manajer Anda adalah 'User/Manajer Tim'.\n" +
+                            "Rekan tim lainnya di ruangan ini: $otherAgentsInfo.\n" +
+                            "Bahaslah masalah yang diajukan secara kolaboratif. Saling mengobrol & menanggapi satu sama lain.\n" +
+                            "PENTING: Jawablah sesingkat mungkin, to-the-point, dan langsung pada substansi gagasan Anda tanpa basa-basi pembuka yang melelahkan. Hemat kata demi menghemat daya dan token API, namun tetap jaga bahasa yang sopan, ramah, dan natural.\n"
+                    
+                    if (privateTarget != null) {
+                        customizedSystemPrompt += "\nPESAN PRIBADI (HANYA UNTUK ANDA): $privateContent\n"
+                    }
+                    
+                    if (isTagged && promptText.contains("@$agentName", ignoreCase = true)) {
+                        customizedSystemPrompt += "\nPERHATIAN: Manajer secara spesifik mengajak Anda bicara (@$agentName). Berikan respons terfokus dan singkat.\n"
+                    }
 
-                var responseText: String
-                var duration: Long = 0L
-                var tokSpeed = 0f
-                var actualEngineUsed = ""
+                    customizedSystemPrompt += "\nPENTING: Sadari nama Anda sendiri '$agentName' dan jangan berbicara atas nama agen lain. Mulailah respons Anda langsung dengan pendapat Anda (tanpa frasa pembuka seperti 'Tentu, saya...' atau 'Halo...'). Gunakan bahasa yang sama dengan input Manajer!"
 
-                val startTime = System.currentTimeMillis()
+                    var responseText: String
+                    var duration: Long = 0L
+                    var tokSpeed = 0f
+                    var actualEngineUsed = ""
 
-                if (agentModel.startsWith("local")) {
-                    val reqModel = if (agentModel.contains(":")) agentModel.substringAfter(":") else null
-                    val result = offlineLlmEngine.generateResponse(workspaceTranscript, systemPrompt = customizedSystemPrompt, requestedModelName = reqModel)
-                    responseText = result.text
-                    duration = result.timeMs
-                    tokSpeed = result.tokensPerSec
-                    actualEngineUsed = "$agentName (AI Lokal${if(reqModel != null) " - $reqModel" else ""})"
-                } else if (agentModel == "deepseek") {
-                    val dKey = _deepseekApiKey.value.trim()
-                    if (dKey.length > 5) {
-                        try {
-                            val result = onlineLlmEngine.generateDeepSeekResponse(
-                                prompt = workspaceTranscript,
-                                history = emptyList(), // Avoid consecutive "model" role messages API validation crash
-                                apiKey = dKey,
-                                modelName = "deepseek-reasoner",
-                                systemPrompt = customizedSystemPrompt
-                            )
-                            responseText = result.text
-                            duration = result.timeMs
-                            tokSpeed = (responseText.split("\\s+".toRegex()).size * 1.3f) / (duration / 1000f)
-                            actualEngineUsed = "$agentName (DeepSeek V4 Pro)"
-                        } catch (e: Exception) {
-                            responseText = "Maaf, $agentName gagal merespons dengan DeepSeek: ${e.localizedMessage}"
+                    val startTime = System.currentTimeMillis()
+
+                    if (agentModel.startsWith("local")) {
+                        val reqModel = if (agentModel.contains(":")) agentModel.substringAfter(":") else null
+                        val result = offlineLlmEngine.generateResponse(workspaceTranscript, systemPrompt = customizedSystemPrompt, requestedModelName = reqModel)
+                        responseText = result.text
+                        duration = result.timeMs
+                        tokSpeed = result.tokensPerSec
+                        actualEngineUsed = "$agentName (AI Lokal${if(reqModel != null) " - $reqModel" else ""})"
+                    } else if (agentModel == "glm5_2") {
+                        val gKey = _glmApiKey.value.trim()
+                        if (gKey.length > 5) {
+                            try {
+                                val result = onlineLlmEngine.generateGlmResponse(
+                                    prompt = workspaceTranscript,
+                                    history = emptyList(),
+                                    apiKey = gKey,
+                                    modelName = "glm-5.2-free",
+                                    systemPrompt = customizedSystemPrompt
+                                )
+                                responseText = result.text
+                                duration = result.timeMs
+                                tokSpeed = (responseText.split("\\s+".toRegex()).size * 1.3f) / (duration / 1000f)
+                                actualEngineUsed = "$agentName (GLM 5.2)"
+                            } catch (e: Exception) {
+                                responseText = "Maaf, $agentName gagal merespons dengan GLM 5.2: ${e.localizedMessage}"
+                                duration = System.currentTimeMillis() - startTime
+                                tokSpeed = 0f
+                                actualEngineUsed = "$agentName (Gagal)"
+                            }
+                        } else {
+                            responseText = "Maaf, API Key GLM 5.2 (Zenmux) belum diatur."
+                            duration = System.currentTimeMillis() - startTime
+                            tokSpeed = 0f
+                            actualEngineUsed = "$agentName (Gagal)"
+                        }
+                    } else if (agentModel == "deepseek") {
+                        val dKey = _deepseekApiKey.value.trim()
+                        if (dKey.length > 5) {
+                            try {
+                                val result = onlineLlmEngine.generateDeepSeekResponse(
+                                    prompt = workspaceTranscript,
+                                    history = emptyList(), // Avoid consecutive "model" role messages API validation crash
+                                    apiKey = dKey,
+                                    modelName = "deepseek-reasoner",
+                                    systemPrompt = customizedSystemPrompt
+                                )
+                                responseText = result.text
+                                duration = result.timeMs
+                                tokSpeed = (responseText.split("\\s+".toRegex()).size * 1.3f) / (duration / 1000f)
+                                actualEngineUsed = "$agentName (DeepSeek V4 Pro)"
+                            } catch (e: Exception) {
+                                responseText = "Maaf, $agentName gagal merespons dengan DeepSeek: ${e.localizedMessage}"
+                                duration = System.currentTimeMillis() - startTime
+                                tokSpeed = 0f
+                                actualEngineUsed = "$agentName (Gagal)"
+                            }
+                        } else {
+                            responseText = "Maaf, API Key DeepSeek belum diatur. Buka Pengaturan -> Storage/DeepSeek untuk memasukkan API Key."
                             duration = System.currentTimeMillis() - startTime
                             tokSpeed = 0f
                             actualEngineUsed = "$agentName (Gagal)"
                         }
                     } else {
-                        responseText = "Maaf, API Key DeepSeek belum diatur. Buka Pengaturan -> Storage/DeepSeek untuk memasukkan API Key."
-                        duration = System.currentTimeMillis() - startTime
-                        tokSpeed = 0f
-                        actualEngineUsed = "$agentName (Gagal)"
-                    }
-                } else {
-                    var success = false
-                    var errorMsg = ""
-                    var currentResponse = ""
-                    
-                    val startingIndex = _activeKeyIndex.value
-                    var triedSlot = startingIndex
-                    var attempts = 0
+                        var success = false
+                        var errorMsg = ""
+                        var currentResponse = ""
+                        
+                        val startingIndex = _activeKeyIndex.value
+                        var triedSlot = startingIndex
+                        var attempts = 0
 
-                    while (attempts < 5 && !success) {
-                        val keySlotVal = apiKeys[triedSlot - 1].value.trim()
-                        if (keySlotVal.length > 5) {
-                            try {
-                                val result = onlineLlmEngine.generateGroundedResponse(
-                                    prompt = workspaceTranscript,
-                                    history = emptyList(), // Avoid consecutive "model" role messages API validation crash
-                                    apiKey = keySlotVal,
-                                    searchEnabled = false,
-                                    systemPrompt = customizedSystemPrompt,
-                                    bypassFilterActive = false
-                                )
-                                currentResponse = result.text
-                                duration = result.timeMs
-                                success = true
-                                setApiKeySlotStatus(triedSlot, "Aktif")
-                            } catch (e: Exception) {
-                                val msg = e.localizedMessage ?: "Unknown API exception"
-                                errorMsg = msg
-                                android.util.Log.e("ChatRepository", "Agent call failed for key slot $triedSlot: $msg")
-                                setApiKeySlotStatus(triedSlot, "Tidak Aktif/Error")
+                        while (attempts < 5 && !success) {
+                            val keySlotVal = apiKeys[triedSlot - 1].value.trim()
+                            if (keySlotVal.length > 5) {
+                                try {
+                                    val result = onlineLlmEngine.generateGroundedResponse(
+                                        prompt = workspaceTranscript,
+                                        history = emptyList(), // Avoid consecutive "model" role messages API validation crash
+                                        apiKey = keySlotVal,
+                                        searchEnabled = false,
+                                        systemPrompt = customizedSystemPrompt,
+                                        bypassFilterActive = false
+                                    )
+                                    currentResponse = result.text
+                                    duration = result.timeMs
+                                    success = true
+                                    setApiKeySlotStatus(triedSlot, "Aktif")
+                                } catch (e: Exception) {
+                                    val msg = e.localizedMessage ?: "Unknown API exception"
+                                    errorMsg = msg
+                                    android.util.Log.e("ChatRepository", "Agent call failed for key slot $triedSlot: $msg")
+                                    setApiKeySlotStatus(triedSlot, "Tidak Aktif/Error")
+                                    triedSlot = if (triedSlot >= 5) 1 else triedSlot + 1
+                                    setActiveKeyIndex(triedSlot)
+                                }
+                            } else {
+                                errorMsg = "API Key slot kosong."
                                 triedSlot = if (triedSlot >= 5) 1 else triedSlot + 1
-                                setActiveKeyIndex(triedSlot)
                             }
-                        } else {
-                            errorMsg = "API Key slot kosong."
-                            triedSlot = if (triedSlot >= 5) 1 else triedSlot + 1
+                            attempts++
                         }
-                        attempts++
+
+                        if (success) {
+                            responseText = currentResponse
+                            tokSpeed = (responseText.split("\\s+".toRegex()).size * 1.3f) / (duration / 1000f)
+                            actualEngineUsed = "$agentName (Gemini 3.5)"
+                            val tokensApprox = responseText.length.toFloat() / 4f + promptText.length.toFloat() / 4f
+                            consumeApiKeyUsage(triedSlot, tokensApprox)
+                        } else {
+                            responseText = "Maaf, $agentName gagal merespons karena semua slot API Key habis limit atau tidak valid: $errorMsg"
+                            duration = System.currentTimeMillis() - startTime
+                            tokSpeed = 0f
+                            actualEngineUsed = "$agentName (Gagal)"
+                        }
                     }
 
-                    if (success) {
-                        responseText = currentResponse
-                        tokSpeed = (responseText.split("\\s+".toRegex()).size * 1.3f) / (duration / 1000f)
-                        actualEngineUsed = "$agentName (Gemini 3.5)"
-                        val tokensApprox = responseText.length.toFloat() / 4f + promptText.length.toFloat() / 4f
-                        consumeApiKeyUsage(triedSlot, tokensApprox)
-                    } else {
-                        responseText = "Maaf, $agentName gagal merespons karena semua slot API Key habis limit atau tidak valid: $errorMsg"
-                        duration = System.currentTimeMillis() - startTime
-                        tokSpeed = 0f
-                        actualEngineUsed = "$agentName (Gagal)"
+                    // Pre-process response
+                    val stopSignaled = responseText.contains(".stop", ignoreCase = true) || responseText.contains("\"stop_conversation\"")
+                    
+                    // Process document operations (if any) generated by the agent
+                    val processedAgentContent = processGoogleDriveDocumentOpps(sessionId, responseText, "model")
+                    
+                    // Save agent's reply inside database
+                    val agentMsg = ChatMessage(
+                        sessionId = sessionId,
+                        role = "model",
+                        content = processedAgentContent,
+                        timestamp = System.currentTimeMillis(),
+                        inferenceTimeMs = duration,
+                        tokensPerSecond = if (duration > 0) tokSpeed else 0f,
+                        engineType = actualEngineUsed
+                    )
+                    chatDao.insertMessage(agentMsg)
+                    
+                    if (stopSignaled) {
+                        _isMultiAgentAutoRunning.value = false
+                        shouldStop = true
+                        break
                     }
                 }
-
-                // Process document operations (if any) generated by the agent
-                val processedAgentContent = processGoogleDriveDocumentOpps(sessionId, responseText, "model")
                 
-                // Save agent's reply inside database
-                val agentMsg = ChatMessage(
-                    sessionId = sessionId,
-                    role = "model",
-                    content = processedAgentContent,
-                    timestamp = System.currentTimeMillis(),
-                    inferenceTimeMs = duration,
-                    tokensPerSecond = if (duration > 0) tokSpeed else 0f,
-                    engineType = actualEngineUsed
-                )
-                chatDao.insertMessage(agentMsg)
-            }
+                iterationCount++
+                if (iterationCount > 30) { // arbitrary safety max loops
+                    _isMultiAgentAutoRunning.value = false
+                }
+            } while (_isMultiAgentAutoRunning.value && !shouldStop)
+            
         } finally {
             _currentActiveAgentRunning.value = null
+            _isMultiAgentAutoRunning.value = false
             notificationHelper.dismissNotification()
             notificationHelper.showCompletionNotification(
                 "Diskusi Multi-Agen Selesai",

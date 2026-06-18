@@ -137,6 +137,12 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     // Multi-Agent State Flow Exposures
     val currentActiveAgentRunning: StateFlow<String?> = repository.currentActiveAgentRunning
+    val isMultiAgentAutoRunning: StateFlow<Boolean> = repository.isMultiAgentAutoRunning
+    
+    fun stopMultiAgentAutoRun() {
+        repository.stopMultiAgentAutoRun()
+    }
+
     val numAgents: StateFlow<Int> = repository.numAgents
     val agentNames: List<StateFlow<String>> = repository.agentNames
     val agentPrompts: List<StateFlow<String>> = repository.agentPrompts
@@ -194,6 +200,7 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
     val storageType: StateFlow<String> = repository.storageType
     val localDirectoryUri: StateFlow<String?> = repository.localDirectoryUri
     val deepseekApiKey: StateFlow<String> = repository.deepseekApiKey
+    val glmApiKey: StateFlow<String> = repository.glmApiKey
     val mainOnlineModel: StateFlow<String> = repository.mainOnlineModel
     val agentNamesFlow: StateFlow<List<String>> = kotlinx.coroutines.flow.combine(repository.agentNames) { it.toList() }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), repository.agentNames.map { it.value })
 
@@ -212,6 +219,10 @@ class ChatViewModel(private val repository: ChatRepository) : ViewModel() {
 
     fun setDeepseekApiKey(key: String) {
         repository.setDeepseekApiKey(key)
+    }
+
+    fun setGlmApiKey(key: String) {
+        repository.setGlmApiKey(key)
     }
 
     fun setMainOnlineModel(model: String) {

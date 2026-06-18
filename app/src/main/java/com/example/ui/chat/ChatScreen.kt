@@ -177,6 +177,7 @@ fun ChatScreen(
     val backupProgress by viewModel.backupProgress.collectAsState()
 
     val currentActiveAgentRunning by viewModel.currentActiveAgentRunning.collectAsState()
+    val isMultiAgentAutoRunning by viewModel.isMultiAgentAutoRunning.collectAsState()
     val numAgents by viewModel.numAgents.collectAsState()
     val activeKeyIndex by viewModel.activeKeyIndex.collectAsState()
     val multiAgentSessionIds by viewModel.multiAgentSessionIds.collectAsState()
@@ -2341,28 +2342,51 @@ fun ChatScreen(
                                 }
                             }
 
-                            IconButton(
-                                onClick = {
-                                    if ((currentUserInput.trim().isNotEmpty() || currentImageBase64 != null) && !isGenerating) {
-                                        viewModel.sendMessage()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .testTag("send_msg_btn")
-                                    .background(
-                                        if ((currentUserInput.trim().isEmpty() && currentImageBase64 == null) || isGenerating) Color(0xFF334155)
-                                        else electricBlue,
-                                        CircleShape
+                            if (isMultiAgentAutoRunning) {
+                                IconButton(
+                                    onClick = {
+                                        viewModel.stopMultiAgentAutoRun()
+                                    },
+                                    modifier = Modifier
+                                        .testTag("stop_msg_btn")
+                                        .background(
+                                            Color(0xFFEF4444), // Red for Stop
+                                            CircleShape
+                                        )
+                                        .size(36.dp),
+                                    enabled = true
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Stop Discussion",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
                                     )
-                                    .size(36.dp),
-                                enabled = (currentUserInput.trim().isNotEmpty() || currentImageBase64 != null) && !isGenerating
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = "Send",
-                                    tint = Color.White,
-                                    modifier = Modifier.size(16.dp)
-                                )
+                                }
+                            } else {
+                                IconButton(
+                                    onClick = {
+                                        if ((currentUserInput.trim().isNotEmpty() || currentImageBase64 != null) && !isGenerating) {
+                                            viewModel.sendMessage()
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .testTag("send_msg_btn")
+                                        .background(
+                                            if ((currentUserInput.trim().isEmpty() && currentImageBase64 == null) || isGenerating) Color(0xFF334155)
+                                            else electricBlue,
+                                            CircleShape
+                                        )
+                                        .size(36.dp),
+                                    enabled = (currentUserInput.trim().isNotEmpty() || currentImageBase64 != null) && !isGenerating
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Filled.Send,
+                                        contentDescription = "Send",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
                             }
                         }
                     }
@@ -2660,7 +2684,7 @@ fun ChatScreen(
                                     modifier = Modifier.padding(vertical = 6.dp)
                                 )
                                 val mainOnlineModel by viewModel.mainOnlineModel.collectAsState()
-                                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     Card(
                                         modifier = Modifier.weight(1f).clickable { viewModel.setMainOnlineModel("gemini") },
                                         colors = CardDefaults.cardColors(containerColor = if (mainOnlineModel == "gemini") electricBlue else Color(0xFF1E293B)),
@@ -2672,6 +2696,14 @@ fun ChatScreen(
                                         colors = CardDefaults.cardColors(containerColor = if (mainOnlineModel == "deepseek") electricBlue else Color(0xFF1E293B)),
                                     ) {
                                         Text("DeepSeek V4 Pro", modifier = Modifier.padding(12.dp).fillMaxWidth(), color = Color.White, textAlign = TextAlign.Center)
+                                    }
+                                }
+                                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Card(
+                                        modifier = Modifier.weight(1f).clickable { viewModel.setMainOnlineModel("glm5_2") },
+                                        colors = CardDefaults.cardColors(containerColor = if (mainOnlineModel == "glm5_2") electricBlue else Color(0xFF1E293B)),
+                                    ) {
+                                        Text("GLM 5.2 (Free)", modifier = Modifier.padding(12.dp).fillMaxWidth(), color = Color.White, textAlign = TextAlign.Center)
                                     }
                                 }
 
@@ -2711,6 +2743,28 @@ fun ChatScreen(
                                     value = deepseekKey,
                                     onValueChange = { viewModel.setDeepseekApiKey(it) },
                                     label = { Text("DeepSeek API Key", fontSize = 11.sp) },
+                                    singleLine = true,
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontFamily = FontFamily.Monospace
+                                    ),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedBorderColor = electricBlue,
+                                        unfocusedBorderColor = Color(0xFF334155),
+                                        focusedLabelColor = electricBlue,
+                                        unfocusedLabelColor = Color(0xFF64748B)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+
+                                val glmKey by viewModel.glmApiKey.collectAsState()
+                                OutlinedTextField(
+                                    value = glmKey,
+                                    onValueChange = { viewModel.setGlmApiKey(it) },
+                                    label = { Text("GLM 5.2 API Key (Zenmux)", fontSize = 11.sp) },
                                     singleLine = true,
                                     textStyle = androidx.compose.ui.text.TextStyle(
                                         color = Color.White,
@@ -3648,36 +3702,49 @@ fun ChatScreen(
                                         fontSize = 11.sp,
                                         modifier = Modifier.padding(bottom = 6.dp)
                                     )
-                                    Row(modifier = Modifier.fillMaxWidth()) {
+                                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                                         val isGemini = currentAgentModel == "gemini"
                                         val isDeepseek = currentAgentModel == "deepseek"
+                                        val isGlm = currentAgentModel == "glm5_2"
                                         val isLocal = currentAgentModel.startsWith("local")
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clip(RoundedCornerShape(topStart = 8.dp, bottomStart = 8.dp))
+                                                .clip(RoundedCornerShape(8.dp))
                                                 .background(if (isGemini) Color(0xFF2563EB) else Color(0xFF1E293B))
                                                 .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "gemini") }
                                                 .padding(vertical = 8.dp)
                                         ) {
-                                            Text("Gemini 3.5", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                            Text("Gemini", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                         }
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
                                                 .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
                                                 .background(if (isDeepseek) Color(0xFF8B5CF6) else Color(0xFF1E293B))
                                                 .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "deepseek") }
                                                 .padding(vertical = 8.dp)
                                         ) {
-                                            Text("DeepSeek V4", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                            Text("DeepSeek", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                         }
                                         Box(
                                             contentAlignment = Alignment.Center,
                                             modifier = Modifier
                                                 .weight(1f)
-                                                .clip(RoundedCornerShape(topEnd = 8.dp, bottomEnd = 8.dp))
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(if (isGlm) electricBlue else Color(0xFF1E293B))
+                                                .clickable { viewModel.setAgentConfig(activeEditingAgentIndex, currentAgentName, currentAgentPrompt, "glm5_2") }
+                                                .padding(vertical = 8.dp)
+                                        ) {
+                                            Text("GLM 5.2", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                        }
+                                        Box(
+                                            contentAlignment = Alignment.Center,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .clip(RoundedCornerShape(8.dp))
                                                 .background(if (isLocal) Color(0xFF10B981) else Color(0xFF1E293B))
                                                 .clickable { 
                                                     val available = viewModel.availableModels.value
@@ -3686,7 +3753,7 @@ fun ChatScreen(
                                                 }
                                                 .padding(vertical = 8.dp)
                                         ) {
-                                            Text("AI Lokal", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                                            Text("AI Lokal", color = Color.White, fontSize = 9.sp, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
                                         }
                                     }
                                     

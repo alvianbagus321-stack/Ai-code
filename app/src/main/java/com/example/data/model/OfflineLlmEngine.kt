@@ -425,8 +425,8 @@ class OfflineLlmEngine(private val context: Context) {
                         "CRITICAL: You MUST always reply in the exact same language the user writes in. " +
                         "STORAGE RULE: You have absolutely ZERO permissions to access user local device storage or directories. " +
                         "Instead, you are connected securely to the user's Google Drive storage. " +
-                        "If you need to create, update, or save a file, you MUST write file block: .create <filename.ext>\\n[file text here]\\n.endfile blocks. " +
-                        "If you need to load a file, ask user to read it or reference `.read <filename.ext>`. " +
+                        "If you need to create, update, or save a file, you MUST write file block: .create <filename.ext>\\n[file text here]\\n.endfile blocks OR standard JSON `{\"function_call\": {\"name\": \"create_file\", \"parameters\": {\"filename\": \"X\", \"content\": \"Y\"}}}`. " +
+                        "If you need to load a file, ask user to read it or reference `.read <filename.ext>` or JSON `read_file`. " +
                         "Never attempt to output local file system paths (e.g. /storage/emulated/0/). " +
                         "Never output internal system logs, processing lanes, thread statuses, or diagnostics. " +
                         "If the user asks you to generate, draw, paint, create, or illustrate an image, you MUST respond with a markdown image linked to Pollinations AI exactly like this: ![<description>](https://image.pollinations.ai/prompt/<detailed_url_encoded_prompt>?width=1024&height=1024&nologo=true) where you replace <detailed_url_encoded_prompt> with a url-encoded prompt in English."

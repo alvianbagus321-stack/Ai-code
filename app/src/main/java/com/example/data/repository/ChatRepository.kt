@@ -661,6 +661,75 @@ class ChatRepository(
         return id
     }
 
+    private suspend fun buildSkillContext(): String {
+        var allContext = """
+            === DEFAULT AI SKILLS & WORKFLOW ===
+            Anda dibekali dengan beberapa Tool (Function Calls). Berikut adalah pengetahuan tentang kapan dan bagaimana menggunakannya:
+            
+            1. create_file
+               - KAPAN: Gunakan ketika Manajer meminta untuk membuat project, menstruktur folder, menulis kode, atau saat Anda perlu menyimpan output Anda ke dalam file di workspace.
+               - WORKFLOW: Jangan hanya mencetak kode di layar chat. Langsung panggil tool `create_file`.
+            
+            2. read_file
+               - KAPAN: Gunakan ketika Anda perlu memahami apa isi dari file yang sudah ada sebelum mengeditnya.
+               - WORKFLOW: Panggil `read_file` terlebih dahulu. Setelah Anda membaca dan memahami kodenya, barulah panggil `create_file` untuk menimpanya dengan kode yang baru.
+            
+            3. delete_file
+               - KAPAN: Gunakan secara spesifik jika Manajer meminta untuk membersihkan atau menghapus file yang salah.
+            
+            4. stop_conversation
+               - KAPAN: Gunakan ini PADA AKHIR TUGAS. Dalam mode Multi-Agen, jika Anda merasa solusi sudah tuntas, bug sudah diperbaiki, atau aplikasi sudah selesai dibuat, Anda WAJIB memanggil `stop_conversation`. 
+               - MENGAPA: Jika Anda tidak memanggilnya, agen lain akan terus membalas dan percakapan akan terjadi tanpa henti (looping).
+            
+            (Catatan: Jika API offline lokal Anda tidak mendukung native tool calls, tulislah respon dengan JSON block markdown yang berisi `function_call` eksplisit agar sistem kami bisa mem-parsingnya).
+            
+        """.trimIndent() + "\n\n"
+        
+        val isDrive = _storageType.value == "drive"
+        
+        if (isDrive) {
+            if (googleDriveHelper.isLinked()) {
+                val rootSkill = googleDriveHelper.fetchFileFromDrive("skill.md")
+                if (!rootSkill.isNullOrBlank()) {
+                    allContext += "\n[SKILL FILE: skill.md]\n$rootSkill\n"
+                }
+            }
+        } else {
+            try {
+                val directoryUri = Uri.parse(_localDirectoryUri.value ?: return "")
+                val docFile = DocumentFile.fromTreeUri(context, directoryUri)
+                
+                val rootSkillFile = docFile?.findFile("skill.md")
+                if (rootSkillFile != null && rootSkillFile.isFile) {
+                    val rootSkillContent = context.contentResolver.openInputStream(rootSkillFile.uri)?.bufferedReader().use { it?.readText() }
+                    if (!rootSkillContent.isNullOrBlank()) {
+                        allContext += "\n[SKILL FILE: skill.md]\n$rootSkillContent\n"
+                    }
+                }
+                
+                val skillsFolder = docFile?.findFile("skills")
+                if (skillsFolder != null && skillsFolder.isDirectory) {
+                    val files = skillsFolder.listFiles()
+                    for (file in files) {
+                        if (file.isFile && file.name?.endsWith(".md") == true) {
+                            val content = context.contentResolver.openInputStream(file.uri)?.bufferedReader().use { it?.readText() }
+                            if (!content.isNullOrBlank()) {
+                                allContext += "\n[SKILL FILE: ${file.name}]\n$content\n"
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+        
+        if (allContext.isNotBlank()) {
+            return "\n\n=== RELEVAN SKILLS / KNOWLEDGE ===\n$allContext\n=================================\n\n"
+        }
+        return ""
+    }
+
     suspend fun sendMessageAndAwaitResponse(
         sessionId: String,
         promptText: String,
@@ -743,6 +812,9 @@ class ChatRepository(
                 }
             }
 
+            // Append Skill Context
+            val customizedSystemPrompt = systemPrompt + buildSkillContext()
+
             // 2. Perform either online (optionally with Imagen mode) or on-device offline inference
             val modelMsg = if (isOnlineMode) {
                 if (isImagenActive) {
@@ -770,7 +842,7 @@ class ChatRepository(
                         history = history,
                         apiKey = _glmApiKey.value,
                         modelName = "glm-5.2-free",
-                        systemPrompt = systemPrompt
+                        systemPrompt = customizedSystemPrompt
                     )
 
                     val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)
@@ -793,7 +865,7 @@ class ChatRepository(
                         history = history,
                         apiKey = _deepseekApiKey.value,
                         modelName = "deepseek-reasoner",
-                        systemPrompt = systemPrompt
+                        systemPrompt = customizedSystemPrompt
                     )
 
                     val speed = (result.text.split("\\s+".toRegex()).size * 1.3f) / (result.timeMs / 1000f)
@@ -817,7 +889,7 @@ class ChatRepository(
                         history = history,
                         apiKey = apiKey,
                         searchEnabled = webSearchEnabled,
-                        systemPrompt = systemPrompt,
+                        systemPrompt = customizedSystemPrompt,
                         imageBase64 = imageBase64,
                         bypassFilterActive = bypassFilterActive.value
                     )
@@ -835,7 +907,7 @@ class ChatRepository(
                     )
                 }
             } else {
-                val result = offlineLlmEngine.generateResponse(promptText, apiKey, systemPrompt)
+                val result = offlineLlmEngine.generateResponse(promptText, apiKey, customizedSystemPrompt)
                 ChatMessage(
                     sessionId = sessionId,
                     role = "model",
@@ -1007,6 +1079,8 @@ class ChatRepository(
                     }
 
                     customizedSystemPrompt += "\nPENTING: Sadari nama Anda sendiri '$agentName' dan jangan berbicara atas nama agen lain. Mulailah respons Anda langsung dengan pendapat Anda (tanpa frasa pembuka seperti 'Tentu, saya...' atau 'Halo...'). Gunakan bahasa yang sama dengan input Manajer!"
+                    
+                    customizedSystemPrompt += buildSkillContext()
 
                     var responseText: String
                     var duration: Long = 0L
